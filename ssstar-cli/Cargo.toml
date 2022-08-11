@@ -1,0 +1,25 @@
+[package]
+name = "ssstar-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Adam Nelson <adam@elastio.com>"]
+description = """
+Tar-like archive utility that creates and restores tar-compatible archives to and from S3 or S3-compatible storage.  ssstar is specifically designed to stream both input and output data so memory usage is minimal, while aggressive concurrency is used to maximize network throughput.
+"""
+documentation = "https://github.com/elastio/ssstar"
+homepage = "https://github.com/elastio/ssstar"
+repository = "https://github.com/elastio/ssstar"
+keywords = ["tar", "s3", "archive"]
+categories = ["command-line-utilities", "filesystem"]
+license = "Apache-2.0 OR MIT"
+
+[[bin]]
+bench = false
+path = "src/main.rs"
+name = "ssstar"
+
+[dependencies]
+ssstar = {version = "0.1.0", path = "../ssstar" }
+clap = {version = "3.2.16", features = ["derive"]}
+url = "2.2.2"
+byte-unit = "4.0.14"

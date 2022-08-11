@@ -1,0 +1,23 @@
+[package]
+name = "ssstar"
+version = "0.1.0"
+edition = "2021"
+authors = ["Adam Nelson <adam@elastio.com>"]
+description = """
+Library crate that creates and restores archives to and from S3 or S3-compatible storage.
+ssstar is specifically designed to stream both input and output data so memory usage is minimal, while
+aggressive concurrency is used to maximize network throughput.
+
+If you're looking for the command line (CLI), see `ssstar-cli`
+"""
+documentation = "https://github.com/elastio/ssstar"
+homepage = "https://github.com/elastio/ssstar"
+repository = "https://github.com/elastio/ssstar"
+keywords = ["tar", "s3", "archive"]
+categories = ["command-line-utilities", "filesystem"]
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
+rusoto_s3 = "0.48.0"
+tar = "0.4.38"
+tracing = "0.1.36"
