@@ -11,7 +11,7 @@ struct Args {
     command: Command,
 
     #[clap(flatten)]
-    globals: Globals,
+    global: Globals,
 }
 
 /// Arguments that apply regardless of command
@@ -147,6 +147,35 @@ enum Command {
 
 fn main() {
     let args = Args::parse();
+
+    // If verbose output is enabled, enabling logging.
+    // If not, log events will be ignored
+    if args.global.verbose {
+        use tracing_subscriber::prelude::*;
+        use tracing_subscriber::{fmt, EnvFilter};
+
+        // Configure a custom event formatter
+        let format = fmt::layer()
+            .with_level(true) // include level in output
+            .with_target(true) // targets aren't that useful but filters operate on targets so they're important to know
+            .with_thread_ids(false) // thread IDs are useless when using async code
+            .with_thread_names(false); // same with thread names
+
+        // Get the log filter from the RUST_LOG env var, or if not set use a reasonable default
+        let filter = EnvFilter::try_from_default_env()
+            .or_else(|_| EnvFilter::try_new("h2=warn,debug"))
+            .unwrap();
+
+        // Create a `fmt` subscriber that uses our custom event format, and set it
+        // as the default.
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(format)
+            .with(fmt::Layer::new().with_writer(std::io::stderr))
+            .init();
+    }
+
+    tracing::info!("This is an info message bitch!");
 
     println!("Hello, world!");
 
