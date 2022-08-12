@@ -25,3 +25,5 @@ url = "2.2.2"
 byte-unit = "4.0.14"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter", "fmt", "local-time"] }
 tracing = "0.1.36"
+tokio = { version = "1.20.1", features = ["full"] }
+color-eyre = "0.6.2"

@@ -1,5 +1,6 @@
 use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
+use tracing::{debug, info};
 use url::Url;
 
 /// Simple program to greet a person
@@ -67,6 +68,22 @@ struct Globals {
     /// In case of multipart transfers, each chunk counts as a separate task.
     #[clap(long, default_value = "1000", global = true)]
     max_queue_size: u64,
+
+    /// The number of async task worker threads in the thread pool.
+    ///
+    /// This value has a reasonable default selected based on the specifications of the system on
+    /// which it runs and should never be overridden except in rare cases.  If you're not sure what
+    /// to set this to, don't set it at all.
+    #[clap(long, global = true)]
+    worker_threads: Option<usize>,
+
+    /// The maximum number of threads used to run blocking tasks.
+    ///
+    /// This value has a reasonable default selected based on the specifications of the system on
+    /// which it runs and should never be overridden except in rare cases.  If you're not sure what
+    /// to set this to, don't set it at all.
+    #[clap(long, global = true)]
+    max_blocking_threads: Option<usize>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -159,7 +176,8 @@ fn main() {
             .with_level(true) // include level in output
             .with_target(true) // targets aren't that useful but filters operate on targets so they're important to know
             .with_thread_ids(false) // thread IDs are useless when using async code
-            .with_thread_names(false); // same with thread names
+            .with_thread_names(false) // same with thread names
+            .with_timer(fmt::time::LocalTime::rfc_3339());
 
         // Get the log filter from the RUST_LOG env var, or if not set use a reasonable default
         let filter = EnvFilter::try_from_default_env()
@@ -175,9 +193,34 @@ fn main() {
             .init();
     }
 
-    tracing::info!("This is an info message bitch!");
+    // Report panics with the prettier color-eyre
+    color_eyre::install().unwrap();
 
-    println!("Hello, world!");
+    // Set up the tokio runtime
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
 
-    println!("{:#?}", args);
+    debug!(?args.global.worker_threads, ?args.global.max_blocking_threads, "Initializing tokio runtime");
+
+    if let Some(worker_threads) = args.global.worker_threads {
+        builder.worker_threads(worker_threads);
+    }
+    if let Some(max_blocking_threads) = args.global.max_blocking_threads {
+        builder.max_blocking_threads(max_blocking_threads);
+    }
+
+    let rt = builder.enable_all().build().unwrap();
+
+    let result: color_eyre::eyre::Result<()> = rt.block_on(async move {
+        tracing::info!("This is an info message bitch!");
+
+        println!("Hello, world!");
+
+        println!("{:#?}", args);
+
+        Ok(())
+    });
+
+    if let Err(e) = result {
+        eprintln!("{:#?}", e);
+    }
 }
