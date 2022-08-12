@@ -1,6 +1,6 @@
 use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{debug, info};
+use tracing::{debug, error};
 use url::Url;
 
 /// Simple program to greet a person
@@ -162,7 +162,7 @@ enum Command {
     },
 }
 
-fn main() {
+fn main() -> color_eyre::Result<()> {
     let args = Args::parse();
 
     // If verbose output is enabled, enabling logging.
@@ -210,17 +210,15 @@ fn main() {
 
     let rt = builder.enable_all().build().unwrap();
 
-    let result: color_eyre::eyre::Result<()> = rt.block_on(async move {
+    rt.block_on(async move {
         tracing::info!("This is an info message bitch!");
 
         println!("Hello, world!");
 
         println!("{:#?}", args);
 
-        Ok(())
-    });
+        color_eyre::Result::<()>::Ok(())
+    })?;
 
-    if let Err(e) = result {
-        eprintln!("{:#?}", e);
-    }
+    Ok(())
 }
