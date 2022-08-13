@@ -121,6 +121,51 @@ enum Command {
     },
 }
 
+impl Command {
+    async fn run(self, globals: &Globals) -> ssstar::Result<()> {
+        let factory = ssstar::ObjectStorageFactory::instance(globals.config.clone());
+
+        match self {
+            Self::Create {
+                file,
+                stdout,
+                s3,
+                objects,
+            } => {
+                // Parse and validate all of the source URLs, producing an ObjectStorage instance
+                // for each one, and from that ObjectStorage instance a CreateArchiveInput object
+                // as well.
+                //
+                // Yes, this implies that we can make a single archive with URLs that refer to more
+                // than one object storage technology.  There's no reason not to support this.
+                let input_futs = objects.into_iter().map(|url| {
+                    let factory = factory.clone();
+
+                    async move {
+                        let objstore = factory.from_url(&url).await?;
+                        let input = objstore.parse_input_url(&url).await?;
+
+                        ssstar::Result::<_>::Ok((objstore, input))
+                    }
+                });
+
+                let inputs = futures::future::try_join_all(input_futs).await?;
+                println!("TODO: implement");
+
+                Ok(())
+            }
+            Self::Extract {
+                file,
+                s3,
+                stdin,
+                target,
+            } => {
+                todo!()
+            }
+        }
+    }
+}
+
 fn main() -> color_eyre::Result<()> {
     let args = Args::parse();
 
@@ -202,15 +247,17 @@ fn main() -> color_eyre::Result<()> {
 
     let rt = builder.enable_all().build().unwrap();
 
-    rt.block_on(async move {
+    let result: color_eyre::Result<()> = rt.block_on(async move {
         tracing::info!("This is an info message bitch!");
 
         println!("Hello, world!");
 
         println!("{:#?}", args);
 
-        color_eyre::Result::<()>::Ok(())
-    })?;
+        args.command.run(&args.global).await?;
 
-    Ok(())
+        color_eyre::Result::<()>::Ok(())
+    });
+
+    result
 }
