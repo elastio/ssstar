@@ -17,7 +17,22 @@ keywords = ["tar", "s3", "archive"]
 categories = ["command-line-utilities", "filesystem"]
 license = "Apache-2.0 OR MIT"
 
+[features]
+# Make the `config` struct a valid `clap` `Parser` impl so the config can be populated from the command line
+# This obvviously requires taking a dependency on `clap` so it should only be enabled in a CLI that is using clap
+clap = ["dep:clap"]
+
 [dependencies]
-rusoto_s3 = "0.48.0"
+async-trait = "0.1.57"
+aws-config = "0.47.0"
+aws-sdk-s3 = "0.17.0"
+aws-smithy-http = "0.47.0"
+byte-unit = { version = "4" }
+clap = {version = "3.2.16", features = ["derive"], optional  = true}
+glob = "0.3.0"
+http = "0.2.8"
+once_cell = "1.13.0"
+snafu = { version = "0.7.1", features = ["futures"] }
 tar = "0.4.38"
 tracing = "0.1.36"
+url = "2.2.2"

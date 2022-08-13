@@ -19,7 +19,7 @@ path = "src/main.rs"
 name = "ssstar"
 
 [dependencies]
-ssstar = {version = "0.1.0", path = "../ssstar" }
+ssstar = {version = "0.1.0", path = "../ssstar", features = ["clap"] }
 clap = {version = "3.2.16", features = ["derive"]}
 url = "2.2.2"
 byte-unit = "4.0.14"

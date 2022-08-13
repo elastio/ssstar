@@ -1,6 +1,6 @@
 use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{debug, error};
+use tracing::debug;
 use url::Url;
 
 /// Simple program to greet a person
@@ -18,13 +18,6 @@ struct Args {
 /// Arguments that apply regardless of command
 #[derive(Parser, Debug)]
 struct Globals {
-    /// Use a custom S3 endpoint instead of AWS.
-    ///
-    /// Use this to operate on a non-Amazon S3-compatible service.  If this is set, the AWS region
-    /// is ignored.
-    #[clap(long, global = true, value_name = "URL")]
-    s3_endpoint: Option<Url>,
-
     /// Enable verbose log output
     #[clap(short = 'v', long, conflicts_with = "quiet", global = true)]
     verbose: bool,
@@ -32,42 +25,6 @@ struct Globals {
     /// Be quiet, suppress almost all output (except errors)
     #[clap(short = 'q', long, conflicts_with = "verbose", global = true)]
     quiet: bool,
-
-    /// The chunk size that ssstar uses for multipart transfers of individual files.
-    ///
-    /// Multipart transfers will be used for objects larger than `multipart_threshold`.
-    ///
-    /// Can be specified as an integer, ie "1000000", or with a suffix ie "10MB".
-    ///
-    /// Note that the maximum number of chunks in an upload is 10,000, so for very large objects
-    /// this chunk size may be overridden if it's smaller than 1/10,000th of the size of the
-    /// object.
-    #[clap(long, default_value = "8MB", global = true)]
-    multipart_chunk_size: byte_unit::Byte,
-
-    /// The size threshold ssstar uses for multipart transfers of individual objects.
-    ///
-    /// If an object is this size of larger, then it will be transfered in chunks of
-    /// `multipart_chunk_size` bytes each.
-    ///
-    /// Can be specified as an integer, ie "1000000", or with a suffix ie "10MB"
-    #[clap(long, default_value = "8MB", global = true)]
-    multipart_threshold: byte_unit::Byte,
-
-    /// The maximum number of concurrent requests to the bucket when performing transfers.
-    ///
-    /// In case of multipart transfers, each chunk counts as a separate request.
-    ///
-    /// A higher number of concurrent requests may be necessary in order to saturate very fast
-    /// connections to S3, but this will also increase RAM usage during the transfer.
-    #[clap(long, default_value = "10", global = true)]
-    max_concurrent_requests: u64,
-
-    /// The maximum number of tasks in the task queue.
-    ///
-    /// In case of multipart transfers, each chunk counts as a separate task.
-    #[clap(long, default_value = "1000", global = true)]
-    max_queue_size: u64,
 
     /// The number of async task worker threads in the thread pool.
     ///
@@ -84,6 +41,9 @@ struct Globals {
     /// to set this to, don't set it at all.
     #[clap(long, global = true)]
     max_blocking_threads: Option<usize>,
+
+    #[clap(flatten)]
+    config: ssstar::Config,
 }
 
 #[derive(Subcommand, Debug)]
