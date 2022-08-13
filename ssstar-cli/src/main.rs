@@ -131,16 +131,50 @@ fn main() -> color_eyre::Result<()> {
         use tracing_subscriber::{fmt, EnvFilter};
 
         // Configure a custom event formatter
+        //
+        // "Why can't we have easy to read, local timestamps instead of UTC timestamps that confuse
+        // everyone who doesn't live at UTC+0?"
+        //
+        // Good question.  Sit down and grab a drink, dear reader, and I'll explain the tale of woe
+        // which has befallen time handling in Rust:
+        //
+        // It turns out there's no 100% reliable way to get the UTC offset of the local timezone on
+        // POSIX systems.  So all your life, when you've seen a local timestamp in a log or a
+        // directory listing or something, you've actually just been incredibly fortunate that a
+        // highly improbable series of events haven't taken place to render the calculation of the
+        // local timezone offset invalid.
+        //
+        // Upon learning this, the developers of the otherwise-excellent (and foundational) `time`
+        // crate in Rust were horrified, and (IMHO) overreacted with such fervent zeal for the
+        // eradication of undefined behavior in their Rust code that they completely disabled the
+        // computation of local time from UTC.
+        //
+        // In what perhaps they thought was a reasonable compromise between pathological risk
+        // aversion and devil-may-care recklessness, they provided an escape hatch: if you control
+        // the binary compilation process you can add to `RUSTFLAGS` a magical incantation to
+        // re-enable this cursed functionality (and thereby take your life into your own hands).
+        // https://github.com/time-rs/time/commit/ec4057d6b8606ec7485380328cf3baedc9b60e54
+        // Unfortunately this is a cartoonishly unworkable solution, as it ensures that any `cargo
+        // install`-powered software distribution is impossible without educating all of your users
+        // on this `RUSTFLAGS` thing.
+        //
+        // So, dear reader, if you enable verbose logging in ssstar and are trying to reason about
+        // when things happened on your environment, be sure you come prepared with knowledge of
+        // your local UTC offset (presumably obtained by unsound means), and practice your mental
+        // arithmetic to translate the UTC timestamps we produce into times that make sense for
+        // you.  And take heart, for you are free from potentially unsound behavior while running
+        // ssstar.
         let format = fmt::layer()
             .with_level(true) // include level in output
             .with_target(true) // targets aren't that useful but filters operate on targets so they're important to know
             .with_thread_ids(false) // thread IDs are useless when using async code
             .with_thread_names(false) // same with thread names
-            .with_timer(fmt::time::LocalTime::rfc_3339());
+            // .with_timer(fmt::time::LocalTime::rfc_3339())
+            .with_writer(std::io::stderr);
 
         // Get the log filter from the RUST_LOG env var, or if not set use a reasonable default
         let filter = EnvFilter::try_from_default_env()
-            .or_else(|_| EnvFilter::try_new("h2=warn,debug"))
+            .or_else(|_| EnvFilter::try_new("h2=warn,hyper=info,rustls=info,debug"))
             .unwrap();
 
         // Create a `fmt` subscriber that uses our custom event format, and set it
@@ -148,7 +182,6 @@ fn main() -> color_eyre::Result<()> {
         tracing_subscriber::registry()
             .with(filter)
             .with(format)
-            .with(fmt::Layer::new().with_writer(std::io::stderr))
             .init();
     }
 
