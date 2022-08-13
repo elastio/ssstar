@@ -1,5 +1,6 @@
 use clap::{ArgGroup, Parser, Subcommand};
-use std::path::PathBuf;
+use ssstar::{CreateArchiveJobBuilder, TargetArchive};
+use std::{path::PathBuf, sync::Arc};
 use tracing::debug;
 use url::Url;
 
@@ -123,8 +124,6 @@ enum Command {
 
 impl Command {
     async fn run(self, globals: &Globals) -> ssstar::Result<()> {
-        let factory = ssstar::ObjectStorageFactory::instance(globals.config.clone());
-
         match self {
             Self::Create {
                 file,
@@ -132,24 +131,26 @@ impl Command {
                 s3,
                 objects,
             } => {
-                // Parse and validate all of the source URLs, producing an ObjectStorage instance
-                // for each one, and from that ObjectStorage instance a CreateArchiveInput object
-                // as well.
-                //
-                // Yes, this implies that we can make a single archive with URLs that refer to more
-                // than one object storage technology.  There's no reason not to support this.
-                let input_futs = objects.into_iter().map(|url| {
-                    let factory = factory.clone();
+                let target = if let Some(path) = file {
+                    TargetArchive::File(path)
+                } else if let Some(url) = s3 {
+                    TargetArchive::ObjectStorage(url)
+                } else if stdout {
+                    TargetArchive::Writer(Arc::new(tokio::io::stdout()))
+                } else {
+                    unreachable!(
+                        "BUG: clap should require the user to specify exactly one of these options"
+                    );
+                };
 
-                    async move {
-                        let objstore = factory.from_url(&url).await?;
-                        let input = objstore.parse_input_url(&url).await?;
+                let mut builder = CreateArchiveJobBuilder::new(globals.config.clone(), target);
 
-                        ssstar::Result::<_>::Ok((objstore, input))
-                    }
-                });
+                for url in objects {
+                    builder.add_input(&url).await?;
+                }
 
-                let inputs = futures::future::try_join_all(input_futs).await?;
+                let job = builder.build().await?;
+
                 println!("TODO: implement");
 
                 Ok(())

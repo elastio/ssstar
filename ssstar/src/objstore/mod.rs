@@ -14,28 +14,18 @@ mod s3;
 ///
 /// Use [`ObjectStorageFactory`] to create an instance of this trait.
 #[async_trait::async_trait]
-pub trait ObjectStorage: Sync + Send + 'static {
+pub trait ObjectStorage: std::fmt::Debug + Sync + Send + 'static {
     /// Given a URL that contains a bucket (and possibly an object key or glob also), extract the
     /// bucket name, validate it against the underlying object storage system, and if it's valid
-    /// then produce a `Bucket` object representing the bucket.
-    async fn extract_bucket_from_url(&self, url: &Url) -> Result<Bucket>;
-
-    /// Given a URL that refers to an object, a prefix, or a glob on a bucket, parse the URL and
-    /// produce a corresponding `CreateArchiveInput` instance.
-    ///
-    /// This needs to communicate with the object storage APIs in order to validate some details so
-    /// if the URL isn't valid this operation can fail.
-    async fn parse_input_url(&self, url: &Url) -> Result<CreateArchiveInput> {
-        let bucket = self.extract_bucket_from_url(url).await?;
-
-        CreateArchiveInput::parse_path(bucket, url.path())
-    }
+    /// then return the bucket name to the caller
+    async fn extract_bucket_from_url(&self, url: &Url) -> Result<String>;
 }
 
 /// Singleton type which constructs [`ObjectStorage`] implementations on demand.
 ///
 /// Note that each implementation is also a singleton, so no more than one instance will ever be
 /// created.
+#[derive(Debug)]
 pub struct ObjectStorageFactory {
     config: Config,
 }
@@ -88,108 +78,6 @@ impl ObjectStorageFactory {
                 // created, and drop the one we created
                 Err((existing_instance, _new_instance)) => existing_instance.clone(),
             }
-        }
-    }
-}
-/// The description of an S3 bucket sufficient to transfer objects to and from.
-#[derive(Clone, Debug)]
-pub struct Bucket {
-    /// The name of the bucket, which must be unique within the region where the bucket is located
-    pub(crate) name: String,
-}
-
-/// An input to a tar archive.
-///
-/// When creating a tar archive, the user can specify the objects to ingest in a few different
-/// ways.  This type represents them all
-#[derive(Clone, Debug)]
-pub enum CreateArchiveInput {
-    /// A single S3 object located in a bucket
-    Object {
-        /// The key name which identifies the object in the bucket
-        key: String,
-
-        /// The ID of the object version to read.
-        ///
-        /// If versioning on the bucket isn't enabled, this should be `None`.
-        ///
-        /// If versioning on the bucket is enabled, and this is `None`, then the most recent
-        /// version of the object will be used.
-        version_id: Option<String>,
-
-        /// The bucket in which this object is located
-        bucket: Bucket,
-    },
-
-    /// All S3 objects in a bucket which have a common prefix.
-    Prefix {
-        /// The prefix to read.  All objects that have this prefix will be read.
-        ///
-        /// Prefixes must end with `/`, otherwise they are not treated as prefixes by the S3 API.
-        /// Thus, this is guaranteed to end with "/"
-        prefix: String,
-
-        /// The bucket in which this prefix is located
-        bucket: Bucket,
-    },
-
-    /// All S3 objects in the bucket
-    ///
-    /// This means the user specified only the bucket and nothing else in the URL, ie
-    /// `s3://mybucket/`.  The final trailing `/` is optional; with or without it such a URL will
-    /// be treated as refering to the entire bucket.
-    Bucket(Bucket),
-
-    /// A glob expression (using wildcards like `*` or `?`) which will be evaluated against all
-    /// objects in the bucket, with matching objects being included
-    Glob {
-        /// The glob pattern to evaluate against all objects in the bucket
-        pattern: glob::Pattern,
-
-        /// The bucket whose objects will be evaluated against the glob pattern
-        bucket: Bucket,
-    },
-}
-
-impl CreateArchiveInput {
-    /// Given the already-parsed bucket component of an input URL, and the path part, determine
-    /// what kind of input this is and return the corresponding value.
-    ///
-    /// The "path" here is everything after the `s3://bucket/` part of the URL.  It could be empty
-    /// or contain a prefix or object name or glob.
-    fn parse_path(bucket: Bucket, path: &str) -> Result<Self> {
-        if path.is_empty() || path == "/" {
-            // There's nothing here just a bucket
-            Ok(Self::Bucket(bucket))
-        } else if path.contains('*')
-            || path.contains('?')
-            || path.contains('[')
-            || path.contains(']')
-        {
-            // It looks like there's a glob here.
-            let pattern = glob::Pattern::new(path).with_context(|_| {
-                crate::error::InvalidGlobPatternSnafu {
-                    pattern: path.to_string(),
-                }
-            })?;
-
-            Ok(Self::Glob { pattern, bucket })
-        } else if path.ends_with("/") {
-            // Looks like a prefix
-            Ok(Self::Prefix {
-                prefix: path.to_string(),
-                bucket,
-            })
-        } else {
-            // The only remaining possibility is that it's a single object key
-            Ok(Self::Object {
-                key: path.to_string(),
-
-                // For now this will always be None.
-                // TODO: How can the version ID be specified in the S3 URL?
-                version_id: None,
-                bucket,
-            })
         }
     }
 }

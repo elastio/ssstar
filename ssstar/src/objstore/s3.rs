@@ -1,4 +1,4 @@
-use super::{Bucket, ObjectStorage};
+use super::ObjectStorage;
 use crate::{Config, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_smithy_http::endpoint::Endpoint;
@@ -7,6 +7,7 @@ use tracing::debug;
 use url::Url;
 
 /// Implementation of [`ObjectStorage`] for S3 and S3-compatible APIs
+#[derive(Debug)]
 pub(super) struct S3 {
     config: Config,
     client: aws_sdk_s3::Client,
@@ -41,7 +42,7 @@ impl S3 {
 
 #[async_trait::async_trait]
 impl ObjectStorage for S3 {
-    async fn extract_bucket_from_url(&self, url: &Url) -> Result<Bucket> {
+    async fn extract_bucket_from_url(&self, url: &Url) -> Result<String> {
         // S3 URLs are of the form:
         // s3://bucket/path
         // In URL terms, the `bucket` part is considered the host name.
@@ -62,9 +63,7 @@ impl ObjectStorage for S3 {
 
         debug!(bucket, "Access to bucket is confirmed");
 
-        Ok(Bucket {
-            name: bucket.to_string(),
-        })
+        Ok(bucket.to_string())
     }
 }
 
