@@ -67,3 +67,8 @@ impl ObjectStorage for S3 {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+}

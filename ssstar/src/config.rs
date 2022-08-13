@@ -3,7 +3,7 @@ use url::Url;
 /// The configuration settings that control the behavior of archive creation and extraction.
 ///
 ///
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 pub struct Config {
     /// Use a custom S3 endpoint instead of AWS.
@@ -22,7 +22,7 @@ pub struct Config {
     /// Note that the maximum number of chunks in an upload is 10,000, so for very large objects
     /// this chunk size may be overridden if it's smaller than 1/10,000th of the size of the
     /// object.
-    #[cfg_attr(feature = "clap", clap(long, default_value = "8MB", global = true))]
+    #[cfg_attr(feature = "clap", clap(long, default_value = "8MiB", global = true))]
     pub(crate) multipart_chunk_size: byte_unit::Byte,
 
     /// The size threshold ssstar uses for multipart transfers of individual objects.
@@ -31,7 +31,7 @@ pub struct Config {
     /// `multipart_chunk_size` bytes each.
     ///
     /// Can be specified as an integer, ie "1000000", or with a suffix ie "10MB"
-    #[cfg_attr(feature = "clap", clap(long, default_value = "8MB", global = true))]
+    #[cfg_attr(feature = "clap", clap(long, default_value = "8MiB", global = true))]
     pub(crate) multipart_threshold: byte_unit::Byte,
 
     /// The maximum number of concurrent requests to the bucket when performing transfers.
@@ -62,5 +62,24 @@ impl Default for Config {
             max_concurrent_requests: 10,
             max_queue_size: 1000,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// If clap is enabled, verify that the `Default` impl and the clap-declared defaults match, to
+    /// detect if they ever drift out of sync in the future
+    #[cfg(feature = "clap")]
+    #[test]
+    fn defaults_match() {
+        let args: &'static [&'static str] = &[];
+        let clap_default = Config::parse_from(args);
+
+        let rust_default = Config::default();
+
+        assert_eq!(clap_default, rust_default);
     }
 }
