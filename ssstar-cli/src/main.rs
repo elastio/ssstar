@@ -172,7 +172,7 @@ fn main() -> color_eyre::Result<()> {
 
     // If verbose output is enabled, enabling logging.
     // If not, log events will be ignored
-    if args.global.verbose {
+    if args.global.verbose || std::env::var("RUST_LOG").is_ok() {
         use tracing_subscriber::prelude::*;
         use tracing_subscriber::{fmt, EnvFilter};
 
@@ -220,7 +220,7 @@ fn main() -> color_eyre::Result<()> {
 
         // Get the log filter from the RUST_LOG env var, or if not set use a reasonable default
         let filter = EnvFilter::try_from_default_env()
-            .or_else(|_| EnvFilter::try_new("h2=warn,hyper=info,rustls=info,debug"))
+            .or_else(|_| EnvFilter::try_new("h2=warn,hyper=info,rustls=info,aws=info,debug"))
             .unwrap();
 
         // Create a `fmt` subscriber that uses our custom event format, and set it

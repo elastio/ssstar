@@ -7,7 +7,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncWrite;
-use tracing::debug;
+use tracing::{debug, instrument};
 use url::Url;
 
 /// Represents where we will write the target archive
@@ -40,12 +40,23 @@ impl std::fmt::Debug for TargetArchive {
 
 /// The description of an object storage bucket containing inputs to the archive
 #[derive(Clone, Debug)]
-struct Bucket {
+pub(crate) struct Bucket {
     /// The name of the bucket, which must be unique within the region where the bucket is located
-    name: String,
+    pub name: String,
+
+    /// Flag indicating if the S3 versioning feature is enabled on this bucket.
+    ///
+    /// If versioning is enabled, ssstar will use it to ensure the version of the object discovered
+    /// initially when enumerating archive inputs is the same version actually added to the
+    /// archive.
+    ///
+    /// If versioning isn't enabled, it's not possible to provide this guarantee, and in can happen
+    /// that an object is overwritten from the time the create operation is initiated to the time
+    /// the object is finally read.
+    pub versioning_enabled: bool,
 
     /// The object storage technology containing this bucket
-    objstore: Arc<dyn ObjectStorage>,
+    pub objstore: Arc<dyn ObjectStorage>,
 }
 
 /// An input to a tar archive.
@@ -53,7 +64,7 @@ struct Bucket {
 /// When creating a tar archive, the user can specify the objects to ingest in a few different
 /// ways.  This type represents them all
 #[derive(Clone, Debug)]
-enum CreateArchiveInput {
+pub(crate) enum CreateArchiveInput {
     /// A single S3 object located in a bucket
     Object {
         /// The key name which identifies the object in the bucket
@@ -124,7 +135,7 @@ impl CreateArchiveInput {
             })?;
 
             Ok(Self::Glob { pattern, bucket })
-        } else if path.ends_with("/") {
+        } else if path.ends_with('/') {
             // Looks like a prefix
             Ok(Self::Prefix {
                 prefix: path.to_string(),
@@ -143,14 +154,34 @@ impl CreateArchiveInput {
         }
     }
 
+    fn bucket(&self) -> Arc<Bucket> {
+        match self {
+            Self::Object { bucket, .. } => bucket.clone(),
+            Self::Prefix { bucket, .. } => bucket.clone(),
+            Self::Bucket(bucket) => bucket.clone(),
+            Self::Glob { bucket, .. } => bucket.clone(),
+        }
+    }
+
     /// Evaluate the input against the actual object store API and return all objects that
     /// corresond to this input.
     ///
     /// This could be a long-running operation if a bucket or prefix is specified which contains
     /// hundreds of thousands or millions of objects.  Note that when using a glob, all objects in
     /// the bucket are enumerated even if the glob pattern itself has a constant prefix.
+    #[instrument(err)]
     async fn into_input_objects(self) -> Result<Vec<InputObject>> {
-        todo!()
+        // Enumerating objects is an object storage implementation-specific operation
+        let bucket = self.bucket();
+
+        debug!("Listing all object store objects that match this archive input");
+        let input_objects = bucket.objstore.list_matching_objects(self).await?;
+        debug!(
+            count = input_objects.len(),
+            "Listing matching objects completed"
+        );
+
+        Ok(input_objects)
     }
 }
 
@@ -158,11 +189,12 @@ impl CreateArchiveInput {
 ///
 /// By the time this struct is created, we already know this object exists and its metadata.
 #[derive(Clone, Debug)]
-struct InputObject {
-    bucket: Arc<Bucket>,
-    key: String,
-    size: u64,
-    timestamp: chrono::DateTime<chrono::Utc>,
+pub(crate) struct InputObject {
+    pub bucket: Arc<Bucket>,
+    pub key: String,
+    pub version_id: Option<String>,
+    pub size: u64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug)]
@@ -202,6 +234,7 @@ impl CreateArchiveJobBuilder {
         // Parse the path component of the URL into an archive input
         let input = CreateArchiveInput::parse_path(
             Arc::new(Bucket {
+                versioning_enabled: objstore.is_bucket_versioning_enabled(&bucket).await?,
                 name: bucket,
                 objstore,
             }),

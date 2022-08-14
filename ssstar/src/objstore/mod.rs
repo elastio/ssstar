@@ -1,4 +1,4 @@
-use crate::{Config, Result};
+use crate::{create, Config, Result};
 use once_cell::sync::OnceCell;
 use snafu::prelude::*;
 use std::sync::Arc;
@@ -14,11 +14,23 @@ mod s3;
 ///
 /// Use [`ObjectStorageFactory`] to create an instance of this trait.
 #[async_trait::async_trait]
-pub trait ObjectStorage: std::fmt::Debug + Sync + Send + 'static {
+pub(crate) trait ObjectStorage: std::fmt::Debug + Sync + Send + 'static {
     /// Given a URL that contains a bucket (and possibly an object key or glob also), extract the
     /// bucket name, validate it against the underlying object storage system, and if it's valid
     /// then return the bucket name to the caller
     async fn extract_bucket_from_url(&self, url: &Url) -> Result<String>;
+
+    /// Test if the versioning feature is enabled on this bucket
+    async fn is_bucket_versioning_enabled(&self, bucket: &str) -> Result<bool>;
+
+    /// List all objects on this object storage system that match the specified input.
+    ///
+    /// This will require evaluating the archive input spec against the contents of the bucket
+    /// specified in the input, using whatever implementation-specific APIs are applicable
+    async fn list_matching_objects(
+        &self,
+        input: create::CreateArchiveInput,
+    ) -> Result<Vec<create::InputObject>>;
 }
 
 /// Singleton type which constructs [`ObjectStorage`] implementations on demand.
@@ -26,7 +38,7 @@ pub trait ObjectStorage: std::fmt::Debug + Sync + Send + 'static {
 /// Note that each implementation is also a singleton, so no more than one instance will ever be
 /// created.
 #[derive(Debug)]
-pub struct ObjectStorageFactory {
+pub(crate) struct ObjectStorageFactory {
     config: Config,
 }
 

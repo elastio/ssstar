@@ -41,13 +41,13 @@ pub struct Config {
     /// A higher number of concurrent requests may be necessary in order to saturate very fast
     /// connections to S3, but this will also increase RAM usage during the transfer.
     #[cfg_attr(feature = "clap", clap(long, default_value = "10", global = true))]
-    pub(crate) max_concurrent_requests: u64,
+    pub(crate) max_concurrent_requests: usize,
 
     /// The maximum number of tasks in the task queue.
     ///
     /// In case of multipart transfers, each chunk counts as a separate task.
     #[cfg_attr(feature = "clap", clap(long, default_value = "1000", global = true))]
-    pub(crate) max_queue_size: u64,
+    pub(crate) max_queue_size: usize,
 }
 
 impl Default for Config {

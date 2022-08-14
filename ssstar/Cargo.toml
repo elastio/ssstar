@@ -27,6 +27,7 @@ async-trait = "0.1.57"
 aws-config = "0.47.0"
 aws-sdk-s3 = "0.17.0"
 aws-smithy-http = "0.47.0"
+aws-smithy-types-convert = { version = "0.47.0", features = ["convert-chrono"] }
 byte-unit = { version = "4" }
 chrono = "0.4.22"
 clap = {version = "3.2.16", features = ["derive"], optional  = true}

@@ -20,7 +20,33 @@ pub enum S3TarError {
         source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::HeadBucketError>,
     },
 
-    #[snafu(display("The glob pattern '{pattern} is invalid"))]
+    #[snafu(display("Error checking if versioning is enabled on S3 bucket '{bucket}'"))]
+    GetBucketVersioning {
+        bucket: String,
+        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::GetBucketVersioningError>,
+    },
+
+    #[snafu(display("Error getting metadata about object '{key}' on S3 bucket '{bucket}"))]
+    HeadObject {
+        bucket: String,
+        key: String,
+        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::HeadObjectError>,
+    },
+
+    #[snafu(display("Error listing objects in S3 bucket '{bucket}' with prefix '{prefix}"))]
+    ListObjectsInPrefix {
+        bucket: String,
+        prefix: String,
+        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::ListObjectsV2Error>,
+    },
+
+    #[snafu(display("Error listing objects in S3 bucket '{bucket}'"))]
+    ListObjectsInBucket {
+        bucket: String,
+        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::ListObjectsV2Error>,
+    },
+
+    #[snafu(display("The glob pattern '{pattern}' is invalid"))]
     InvalidGlobPattern {
         pattern: String,
         source: glob::PatternError,
