@@ -2,6 +2,7 @@
 //! storage.
 use crate::objstore::{Bucket, ObjectStorage, ObjectStorageFactory};
 use crate::{Config, Result, S3TarError};
+use itertools::Itertools;
 use snafu::prelude::*;
 use std::future::Future;
 use std::path::PathBuf;
@@ -246,7 +247,7 @@ impl CreateArchiveJobBuilder {
             .into_iter()
             .map(move |input| input.into_input_objects());
 
-        let inputs = futures::future::try_join_all(input_futs)
+        let mut inputs = futures::future::try_join_all(input_futs)
             .await?
             .into_iter()
             .flatten()
@@ -256,6 +257,21 @@ impl CreateArchiveJobBuilder {
             object_count = inputs.len(),
             "Listed all objects in all inputs"
         );
+
+        // Sort all objects by their timestamp, from oldest to newest.  This is critical for best
+        // performance when the archive is to be ingested by Elastio repeatedly.  We want objects
+        // that existed the last time this archive was created to exist in the same place in the
+        // stream, so that our dedupe will be maximally effective.
+        inputs.sort_unstable_by_key(|input_object| input_object.timestamp);
+
+        // Now dedupe the input objects, in case multiple archive inputs matched the same object.
+        // It obviously makes no sense to include the same object twice in the archive.
+        let inputs = inputs
+            .into_iter()
+            .dedup_by(|x, y| {
+                x.bucket.name() == y.bucket.name() && x.key == y.key && x.timestamp == y.timestamp
+            })
+            .collect::<Vec<_>>();
 
         Ok(CreateArchiveJob {
             config: self.config,

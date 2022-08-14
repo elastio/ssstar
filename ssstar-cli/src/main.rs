@@ -151,7 +151,8 @@ impl Command {
 
                 let job = builder.build().await?;
 
-                println!("TODO: implement");
+                println!("TODO: implement job");
+                job.run(futures::future::pending(), ()).await?;
 
                 Ok(())
             }
