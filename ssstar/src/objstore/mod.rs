@@ -1,7 +1,8 @@
 use crate::{create, Config, Result};
+use dyn_clone::DynClone;
 use once_cell::sync::OnceCell;
 use snafu::prelude::*;
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
 use url::Url;
 
 mod s3;
@@ -13,25 +14,46 @@ mod s3;
 /// trait.
 ///
 /// Use [`ObjectStorageFactory`] to create an instance of this trait.
+///
+/// Note that all implementations are trivially cloneable such that the cost of a clone is the cost
+/// of increasing the ref count on an `Arc`
 #[async_trait::async_trait]
-pub(crate) trait ObjectStorage: std::fmt::Debug + Sync + Send + 'static {
+pub(crate) trait ObjectStorage: DynClone + std::fmt::Debug + Sync + Send + 'static {
     /// Given a URL that contains a bucket (and possibly an object key or glob also), extract the
     /// bucket name, validate it against the underlying object storage system, and if it's valid
     /// then return the bucket name to the caller
-    async fn extract_bucket_from_url(&self, url: &Url) -> Result<String>;
+    async fn extract_bucket_from_url(&self, url: &Url) -> Result<Box<dyn Bucket>>;
+}
 
-    /// Test if the versioning feature is enabled on this bucket
-    async fn is_bucket_versioning_enabled(&self, bucket: &str) -> Result<bool>;
+dyn_clone::clone_trait_object!(ObjectStorage);
 
-    /// List all objects on this object storage system that match the specified input.
+/// A bucket which is like a namespace in which object storage systems store named objects.
+///
+/// Each implementation of this trait is specific to the corresponding implementation of
+/// [`ObjectStorage`] and cannot be mixed with another implementation or a runtime panic can ocurr.
+///
+/// Note that all implementations are trivially cloneable such that the cost of a clone is the cost
+/// of increasing the ref count on an `Arc`
+#[async_trait::async_trait]
+pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
+    /// HACK so that implementations can downcast from `Arc<dyn Bucket>` to the
+    /// implementation-specific type.  Pretend you didn't see this.
+    #[doc(hidden)]
+    fn as_any(&self) -> &(dyn Any + Sync + Send);
+
+    fn name(&self) -> &str;
+
+    /// List all objects in this bucket that match the specified selector
     ///
-    /// This will require evaluating the archive input spec against the contents of the bucket
-    /// specified in the input, using whatever implementation-specific APIs are applicable
+    /// This will require evaluating the archive input spec against the contents of the bucket,
+    /// using whatever implementation-specific APIs are applicable
     async fn list_matching_objects(
         &self,
-        input: create::CreateArchiveInput,
+        selector: create::ObjectSelector,
     ) -> Result<Vec<create::InputObject>>;
 }
+
+dyn_clone::clone_trait_object!(Bucket);
 
 /// Singleton type which constructs [`ObjectStorage`] implementations on demand.
 ///

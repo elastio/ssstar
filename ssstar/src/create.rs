@@ -1,6 +1,6 @@
 //! Implementation of the operation which creates a tar archive from inputs stored in object
 //! storage.
-use crate::objstore::{ObjectStorage, ObjectStorageFactory};
+use crate::objstore::{Bucket, ObjectStorage, ObjectStorageFactory};
 use crate::{Config, Result, S3TarError};
 use snafu::prelude::*;
 use std::future::Future;
@@ -38,78 +38,17 @@ impl std::fmt::Debug for TargetArchive {
     }
 }
 
-/// The description of an object storage bucket containing inputs to the archive
-#[derive(Clone, Debug)]
-pub(crate) struct Bucket {
-    /// The name of the bucket, which must be unique within the region where the bucket is located
-    pub name: String,
-
-    /// Flag indicating if the S3 versioning feature is enabled on this bucket.
-    ///
-    /// If versioning is enabled, ssstar will use it to ensure the version of the object discovered
-    /// initially when enumerating archive inputs is the same version actually added to the
-    /// archive.
-    ///
-    /// If versioning isn't enabled, it's not possible to provide this guarantee, and in can happen
-    /// that an object is overwritten from the time the create operation is initiated to the time
-    /// the object is finally read.
-    pub versioning_enabled: bool,
-
-    /// The object storage technology containing this bucket
-    pub objstore: Arc<dyn ObjectStorage>,
-}
-
 /// An input to a tar archive.
 ///
 /// When creating a tar archive, the user can specify the objects to ingest in a few different
 /// ways.  This type represents them all
 #[derive(Clone, Debug)]
-pub(crate) enum CreateArchiveInput {
-    /// A single S3 object located in a bucket
-    Object {
-        /// The key name which identifies the object in the bucket
-        key: String,
+pub(crate) struct CreateArchiveInput {
+    /// The bucket in which the objects are to be found
+    bucket: Box<dyn Bucket>,
 
-        /// The ID of the object version to read.
-        ///
-        /// If versioning on the bucket isn't enabled, this should be `None`.
-        ///
-        /// If versioning on the bucket is enabled, and this is `None`, then the most recent
-        /// version of the object will be used.
-        version_id: Option<String>,
-
-        /// The bucket in which this object is located
-        bucket: Arc<Bucket>,
-    },
-
-    /// All S3 objects in a bucket which have a common prefix.
-    Prefix {
-        /// The prefix to read.  All objects that have this prefix will be read.
-        ///
-        /// Prefixes must end with `/`, otherwise they are not treated as prefixes by the S3 API.
-        /// Thus, this is guaranteed to end with "/"
-        prefix: String,
-
-        /// The bucket in which this prefix is located
-        bucket: Arc<Bucket>,
-    },
-
-    /// All S3 objects in the bucket
-    ///
-    /// This means the user specified only the bucket and nothing else in the URL, ie
-    /// `s3://mybucket/`.  The final trailing `/` is optional; with or without it such a URL will
-    /// be treated as refering to the entire bucket.
-    Bucket(Arc<Bucket>),
-
-    /// A glob expression (using wildcards like `*` or `?`) which will be evaluated against all
-    /// objects in the bucket, with matching objects being included
-    Glob {
-        /// The glob pattern to evaluate against all objects in the bucket
-        pattern: glob::Pattern,
-
-        /// The bucket whose objects will be evaluated against the glob pattern
-        bucket: Arc<Bucket>,
-    },
+    /// The selector that describes which objects in the bucket to include in the archive
+    selector: ObjectSelector,
 }
 
 impl CreateArchiveInput {
@@ -118,10 +57,13 @@ impl CreateArchiveInput {
     ///
     /// The "path" here is everything after the `s3://bucket/` part of the URL.  It could be empty
     /// or contain a prefix or object name or glob.
-    fn parse_path(bucket: Arc<Bucket>, path: &str) -> Result<Self> {
+    fn parse_path(bucket: Box<dyn Bucket>, path: &str) -> Result<Self> {
         if path.is_empty() || path == "/" {
             // There's nothing here just a bucket
-            Ok(Self::Bucket(bucket))
+            Ok(Self {
+                bucket,
+                selector: ObjectSelector::Bucket,
+            })
         } else if path.contains('*')
             || path.contains('?')
             || path.contains('[')
@@ -134,32 +76,31 @@ impl CreateArchiveInput {
                 }
             })?;
 
-            Ok(Self::Glob { pattern, bucket })
+            Ok(Self {
+                bucket,
+                selector: ObjectSelector::Glob { pattern },
+            })
         } else if path.ends_with('/') {
             // Looks like a prefix
-            Ok(Self::Prefix {
-                prefix: path.to_string(),
+            Ok(Self {
                 bucket,
+                selector: ObjectSelector::Prefix {
+                    prefix: path.to_string(),
+                },
             })
         } else {
             // The only remaining possibility is that it's a single object key
-            Ok(Self::Object {
-                key: path.to_string(),
-
-                // For now this will always be None.
-                // TODO: How can the version ID be specified in the S3 URL?
-                version_id: None,
+            Ok(Self {
                 bucket,
-            })
-        }
-    }
 
-    fn bucket(&self) -> Arc<Bucket> {
-        match self {
-            Self::Object { bucket, .. } => bucket.clone(),
-            Self::Prefix { bucket, .. } => bucket.clone(),
-            Self::Bucket(bucket) => bucket.clone(),
-            Self::Glob { bucket, .. } => bucket.clone(),
+                selector: ObjectSelector::Object {
+                    key: path.to_string(),
+
+                    // For now this will always be None.
+                    // TODO: How can the version ID be specified in the S3 URL?
+                    version_id: None,
+                },
+            })
         }
     }
 
@@ -172,10 +113,8 @@ impl CreateArchiveInput {
     #[instrument(err)]
     async fn into_input_objects(self) -> Result<Vec<InputObject>> {
         // Enumerating objects is an object storage implementation-specific operation
-        let bucket = self.bucket();
-
         debug!("Listing all object store objects that match this archive input");
-        let input_objects = bucket.objstore.list_matching_objects(self).await?;
+        let input_objects = self.bucket.list_matching_objects(self.selector).await?;
         debug!(
             count = input_objects.len(),
             "Listing matching objects completed"
@@ -185,12 +124,53 @@ impl CreateArchiveInput {
     }
 }
 
+/// Selector which describes the objects to include in the archive, within a particular bucket.
+#[derive(Clone, Debug)]
+pub(crate) enum ObjectSelector {
+    /// A single S3 object located in a bucket
+    Object {
+        /// The key name which identifies the object in the bucket
+        key: String,
+
+        /// The ID of the object version to read.
+        ///
+        /// If versioning on the bucket isn't enabled, this should be `None`.
+        ///
+        /// If versioning on the bucket is enabled, and this is `None`, then the most recent
+        /// version of the object will be used.
+        version_id: Option<String>,
+    },
+
+    /// All S3 objects in a bucket which have a common prefix.
+    Prefix {
+        /// The prefix to read.  All objects that have this prefix will be read.
+        ///
+        /// Prefixes must end with `/`, otherwise they are not treated as prefixes by the S3 API.
+        /// Thus, this is guaranteed to end with "/"
+        prefix: String,
+    },
+
+    /// All S3 objects in the bucket
+    ///
+    /// This means the user specified only the bucket and nothing else in the URL, ie
+    /// `s3://mybucket/`.  The final trailing `/` is optional; with or without it such a URL will
+    /// be treated as refering to the entire bucket.
+    Bucket,
+
+    /// A glob expression (using wildcards like `*` or `?`) which will be evaluated against all
+    /// objects in the bucket, with matching objects being included
+    Glob {
+        /// The glob pattern to evaluate against all objects in the bucket
+        pattern: glob::Pattern,
+    },
+}
+
 /// A specific object in object storage which will be included in the archive.
 ///
 /// By the time this struct is created, we already know this object exists and its metadata.
 #[derive(Clone, Debug)]
 pub(crate) struct InputObject {
-    pub bucket: Arc<Bucket>,
+    pub bucket: Box<dyn Bucket>,
     pub key: String,
     pub version_id: Option<String>,
     pub size: u64,
@@ -229,17 +209,10 @@ impl CreateArchiveJobBuilder {
 
         // Validate the bucket and extract it from the URL
         let bucket = objstore.extract_bucket_from_url(input).await?;
-        debug!(url = %input, %bucket, "Confirmed bucket access for input");
+        debug!(url = %input, ?bucket, "Confirmed bucket access for input");
 
         // Parse the path component of the URL into an archive input
-        let input = CreateArchiveInput::parse_path(
-            Arc::new(Bucket {
-                versioning_enabled: objstore.is_bucket_versioning_enabled(&bucket).await?,
-                name: bucket,
-                objstore,
-            }),
-            input.path(),
-        )?;
+        let input = CreateArchiveInput::parse_path(bucket, input.path())?;
 
         debug!(?input, "Adding archive input to job");
 
