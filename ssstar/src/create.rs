@@ -53,7 +53,7 @@ pub(crate) struct CreateArchiveInput {
 
 impl CreateArchiveInput {
     /// Given the already-parsed bucket component of an input URL, and the path part, determine
-    /// what kind of input this is and return the corresponding value.
+    /// what kind of input selector this is and return the corresponding value.
     ///
     /// The "path" here is everything after the `s3://bucket/` part of the URL.  It could be empty
     /// or contain a prefix or object name or glob.
@@ -69,16 +69,13 @@ impl CreateArchiveInput {
             || path.contains('[')
             || path.contains(']')
         {
-            // It looks like there's a glob here.
-            let pattern = glob::Pattern::new(path).with_context(|_| {
-                crate::error::InvalidGlobPatternSnafu {
-                    pattern: path.to_string(),
-                }
-            })?;
-
+            // It looks like there's a glob here.  The actual parsing of the glob needs to be done
+            // by the object store impl itself though
             Ok(Self {
                 bucket,
-                selector: ObjectSelector::Glob { pattern },
+                selector: ObjectSelector::Glob {
+                    pattern: path.to_string(),
+                },
             })
         } else if path.ends_with('/') {
             // Looks like a prefix
@@ -161,7 +158,7 @@ pub(crate) enum ObjectSelector {
     /// objects in the bucket, with matching objects being included
     Glob {
         /// The glob pattern to evaluate against all objects in the bucket
-        pattern: glob::Pattern,
+        pattern: String,
     },
 }
 

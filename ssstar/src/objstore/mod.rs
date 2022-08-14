@@ -41,6 +41,8 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     #[doc(hidden)]
     fn as_any(&self) -> &(dyn Any + Sync + Send);
 
+    fn objstore(&self) -> Box<dyn ObjectStorage>;
+
     fn name(&self) -> &str;
 
     /// List all objects in this bucket that match the specified selector

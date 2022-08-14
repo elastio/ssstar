@@ -28,20 +28,6 @@ impl S3 {
             }),
         }
     }
-
-    /// Paths from URLs like `s3://bucket/prefix/object` always start with `/`, but that's not
-    /// actually part of the S3 object key.  Fix such paths.
-    ///
-    /// Technically, the URL path *is* started by `/`, but S3's API doesn't work that way, it
-    /// regards the `/` as a separator or delimiter which splits the bucket name and the object
-    /// key.
-    fn url_path_to_s3_path(key: &str) -> &str {
-        if let Some(stripped) = key.strip_prefix('/') {
-            stripped
-        } else {
-            key
-        }
-    }
 }
 
 #[async_trait::async_trait]
@@ -183,7 +169,7 @@ impl S3Bucket {
                 .client
                 .head_object()
                 .bucket(&self.inner.name)
-                .key(S3::url_path_to_s3_path(key))
+                .key(Self::url_path_to_s3_path(key))
                 .send()
                 .await
                 .with_context(|_| crate::error::HeadObjectSnafu {
@@ -292,12 +278,26 @@ impl S3Bucket {
                 }
             };
 
-            return Err(crate::error::BucketInvalidOrNotAccessibleSnafu {
+            Err(crate::error::BucketInvalidOrNotAccessibleSnafu {
                 bucket: name.to_string(),
             }
-            .into_error(e));
+            .into_error(e))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Paths from URLs like `s3://bucket/prefix/object` always start with `/`, but that's not
+    /// actually part of the S3 object key.  Fix such paths.
+    ///
+    /// Technically, the URL path *is* started by `/`, but S3's API doesn't work that way, it
+    /// regards the `/` as a separator or delimiter which splits the bucket name and the object
+    /// key.
+    fn url_path_to_s3_path(key: &str) -> &str {
+        if let Some(stripped) = key.strip_prefix('/') {
+            stripped
+        } else {
+            key
         }
     }
 }
@@ -306,6 +306,10 @@ impl S3Bucket {
 impl Bucket for S3Bucket {
     fn as_any(&self) -> &(dyn Any + Sync + Send) {
         self
+    }
+
+    fn objstore(&self) -> Box<dyn ObjectStorage> {
+        dyn_clone::clone_box(&self.inner.objstore)
     }
 
     fn name(&self) -> &str {
@@ -330,7 +334,7 @@ impl Bucket for S3Bucket {
                     .client
                     .head_object()
                     .bucket(&self.inner.name)
-                    .key(S3::url_path_to_s3_path(&key))
+                    .key(Self::url_path_to_s3_path(&key))
                     .set_version_id(version_id)
                     .send()
                     .await
@@ -360,7 +364,7 @@ impl Bucket for S3Bucket {
                     .client
                     .list_objects_v2()
                     .bucket(&self.inner.name)
-                    .prefix(S3::url_path_to_s3_path(&prefix))
+                    .prefix(Self::url_path_to_s3_path(&prefix))
                     .into_paginator()
                     .send();
 
@@ -442,7 +446,69 @@ impl Bucket for S3Bucket {
                 // This is kind of a variation on the Bucket match arm.  List everything in the
                 // bucket just like it does, but filter each individual object to see if it matches
                 // the glob expression
-                todo!()
+
+                debug!(
+                    bucket = %self.inner.name,
+                    glob = %pattern,
+                    "Archive input matches objects in a bucket which match a glob pattern"
+                );
+
+                // Before parsing the glob pattern, it needs to be translated from URL path to an
+                // object name, as all other object keys are
+                let s3_pattern = Self::url_path_to_s3_path(&pattern);
+                let pattern = glob::Pattern::new(s3_pattern).with_context(|_| {
+                    crate::error::InvalidGlobPatternSnafu {
+                        pattern: s3_pattern.to_string(),
+                    }
+                })?;
+
+                // Use the paginated API to automatically handle dealing with continuation tokens
+                let pages = self
+                    .inner
+                    .client
+                    .list_objects_v2()
+                    .bucket(&self.inner.name)
+                    .into_paginator()
+                    .send();
+
+                // Translate this stream of pages of object listings into a stream of AWS SDK
+                // 'Object' structs so we can process them one at a time
+                let objects = pages.map(|result| {
+                    let page = result.with_context(|_| crate::error::ListObjectsInBucketSnafu {
+                        bucket: self.inner.name.clone(),
+                    })?;
+
+                    // Apply the glob to the vec of Object entries, filtering out any whose
+                    // complete object key doesn't match the glob
+                    //
+                    // As the bucket can be empty, we have to account for the possibility that
+                    // `contents` is `None`
+                    let contents = page
+                        .contents
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|object| {
+                            // I think objects always have a key, the fact that this is `Option` is
+                            // just an artifact of the machine-generated Rust bindings
+                            let key = object.key().expect("Objects must have keys");
+
+                            pattern.matches(key)
+                        })
+                        .collect::<Vec<_>>();
+
+                    Ok(contents)
+                });
+
+                let input_objects = self.objects_to_input_objects(objects).await?;
+
+                debug!(
+                    input_objects = input_objects.len(),
+                    bucket = %self.inner.name,
+                    glob = %pattern,
+                    "Matched all S3 objects in an S3 bucket which match the specified glob"
+                );
+
+                Ok(input_objects)
             }
         }
     }
