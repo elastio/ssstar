@@ -8,15 +8,10 @@
 use crate::Result;
 use futures::{Stream, StreamExt};
 use std::{
-    io::{Cursor, Read},
+    io::{Cursor, Read, Write},
     pin::Pin,
 };
-
-struct TryStreamReader {
-    buffer: Option<Cursor<Vec<u8>>>,
-    stream: Pin<Box<dyn Stream<Item = Result<Vec<u8>>> + Send>>,
-    handle: tokio::runtime::Handle,
-}
+use tokio::io::AsyncWrite;
 
 /// Given a [`Stream`] impl that yields vecs of bytes, produce a [`Read`] implementation that will
 /// expose those very same bytes for blocking reads.
@@ -35,6 +30,28 @@ where
         stream: Box::pin(stream),
         handle,
     }
+}
+
+/// Given an async [`tokio::io::AsyncWrite`] implementation, wrap it in a synchronous
+/// [`std::io::Write`] impl which will pass writes to the async implementation internally.
+///
+/// As with [`stream_as_reader`], we need this to connect our completely async code with the `tar`
+/// crate which operations only on blocking I/O.
+///
+/// Also like `stream_as_reader`, the internal implementation mechanism means that attempting to
+/// perform blocking I/O on the returned `Write` impl from within an async context will panic.  You
+/// should never do blocking I/O in an async context anyway.
+pub(crate) fn async_write_as_writer<W>(writer: W) -> impl Write
+where
+    W: AsyncWrite + Unpin + 'static,
+{
+    tokio_util::io::SyncIoBridge::new(writer)
+}
+
+struct TryStreamReader {
+    buffer: Option<Cursor<Vec<u8>>>,
+    stream: Pin<Box<dyn Stream<Item = Result<Vec<u8>>> + Send>>,
+    handle: tokio::runtime::Handle,
 }
 
 impl Read for TryStreamReader {

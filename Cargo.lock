@@ -1581,6 +1581,7 @@ dependencies = [
  "snafu",
  "tar",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
