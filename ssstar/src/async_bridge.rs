@@ -6,6 +6,7 @@
 //! operates on synchronous `Read` and `Write` traits.
 
 use crate::Result;
+use bytes::{buf::Reader, Buf, Bytes};
 use futures::{Stream, StreamExt};
 use std::{
     io::{Cursor, Read, Write},
@@ -21,7 +22,7 @@ use tokio::io::AsyncWrite;
 /// performed in a blocking worker thread, using [`tokio::task::spawn_blocking`].
 pub(crate) fn stream_as_reader<S>(stream: S) -> impl Read
 where
-    S: Stream<Item = Result<Vec<u8>>> + Send + 'static,
+    S: Stream<Item = Result<Bytes>> + Send + 'static,
 {
     let handle = tokio::runtime::Handle::current();
 
@@ -41,7 +42,7 @@ where
 /// Also like `stream_as_reader`, the internal implementation mechanism means that attempting to
 /// perform blocking I/O on the returned `Write` impl from within an async context will panic.  You
 /// should never do blocking I/O in an async context anyway.
-pub(crate) fn async_write_as_writer<W>(writer: W) -> impl Write
+pub(crate) fn async_write_as_writer<W>(writer: W) -> tokio_util::io::SyncIoBridge<W>
 where
     W: AsyncWrite + Unpin + 'static,
 {
@@ -49,8 +50,8 @@ where
 }
 
 struct TryStreamReader {
-    buffer: Option<Cursor<Vec<u8>>>,
-    stream: Pin<Box<dyn Stream<Item = Result<Vec<u8>>> + Send>>,
+    buffer: Option<Reader<Bytes>>,
+    stream: Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>>,
     handle: tokio::runtime::Handle,
 }
 
@@ -59,9 +60,7 @@ impl Read for TryStreamReader {
         // If there's an existing buffer of data left over from a prior read, try to satisfy the
         // read request that way
         if let Some(mut buffer) = self.buffer.take() {
-            let bytes_remaining = buffer.get_ref().len() - buffer.position() as usize;
-
-            if bytes_remaining > 0 {
+            if buffer.get_ref().remaining() > 0 {
                 // Satisfy the read request using this buffer.
                 //
                 // Note it's possible that `buf` is bigger than the available bytes in the buffer,
@@ -71,7 +70,7 @@ impl Read for TryStreamReader {
                 let bytes_read = buffer.read(buf)?;
 
                 // If there's anything left in the buffer, put it back for use the next time
-                if buffer.get_ref().len() > buffer.position() as usize {
+                if buffer.get_ref().remaining() > 0 {
                     self.buffer = Some(buffer);
                 }
 
@@ -92,14 +91,14 @@ impl Read for TryStreamReader {
                 // be ugly
                 Err(std::io::Error::new(std::io::ErrorKind::Other, e))
             }
-            Some(Ok(buffer)) => {
+            Some(Ok(bytes)) => {
                 // Got the next buffer full of data.  Satisfy this read from it, and if there's
                 // anything left over after that, store it for the next read
-                let mut buffer = Cursor::new(buffer);
+                let mut buffer = bytes.reader();
 
                 let bytes_read = buffer.read(buf)?;
 
-                if buffer.get_ref().len() > buffer.position() as usize {
+                if buffer.get_ref().remaining() > 0 {
                     self.buffer = Some(buffer);
                 }
 
@@ -143,7 +142,7 @@ mod tests {
 
             chunk.truncate(bytes_read);
 
-            chunks.push(chunk);
+            chunks.push(Bytes::from(chunk));
         }
 
         // Make a stream that yields these chunks one at a time

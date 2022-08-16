@@ -2,7 +2,8 @@ use crate::{create, Config, Result};
 use dyn_clone::DynClone;
 use once_cell::sync::OnceCell;
 use snafu::prelude::*;
-use std::{any::Any, sync::Arc};
+use std::{any::Any, ops::Range, sync::Arc};
+use tokio::io::{AsyncWrite, DuplexStream};
 use url::Url;
 
 mod s3;
@@ -53,6 +54,28 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
         &self,
         selector: create::ObjectSelector,
     ) -> Result<Vec<create::InputObject>>;
+
+    /// Read a part of an object.
+    ///
+    /// This performs the read as a single network call, which means it's not suited for reading
+    /// large (multiple hundreds of MB or more) data.  For that, multiple `read_object_part` calls
+    /// should be made in parallel for different ranges of the same object.
+    async fn read_object_part(&self, key: String, version_id: Option<String>, byte_range: Range<u64>) -> Result<bytes::Bytes>;
+
+    /// Construct an [`DuplexStream`] implementation that will upload all written data to the object
+    /// identified as `key`.
+    ///
+    /// The size of the object to write doesn't have to be known exactly, but the caller should
+    /// provide a size hint if it can predict approximately how large the object will be.
+    ///
+    /// The internal implementation is optimized for concurrency, and will divide the written data
+    /// up into chunks which are uploaded in parallel, subject to the max concurrency in the
+    /// config.
+    async fn create_object_writer(
+        &self,
+        key: String,
+        size_hint: Option<u64>,
+    ) -> Result<DuplexStream>;
 }
 
 dyn_clone::clone_trait_object!(Bucket);

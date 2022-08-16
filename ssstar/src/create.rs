@@ -1,18 +1,21 @@
 //! Implementation of the operation which creates a tar archive from inputs stored in object
 //! storage.
 use crate::objstore::{Bucket, ObjectStorage, ObjectStorageFactory};
+use crate::tar::TarBuilderWrapper;
 use crate::{Config, Result, S3TarError};
+use futures::StreamExt;
 use itertools::Itertools;
 use snafu::prelude::*;
 use std::future::Future;
+use std::io::Write;
+use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWrite;
 use tracing::{debug, instrument};
 use url::Url;
 
 /// Represents where we will write the target archive
-#[derive(Clone)]
 pub enum TargetArchive {
     /// Write the tar archive to object storage at the specified URL.
     ///
@@ -23,7 +26,7 @@ pub enum TargetArchive {
     File(PathBuf),
 
     /// Write the tar archive to some arbitrary [`tokio::io::AsyncWrite`] impl.
-    Writer(Arc<dyn AsyncWrite>),
+    Writer(Box<dyn AsyncWrite + Send + Unpin>),
 }
 
 impl std::fmt::Debug for TargetArchive {
@@ -175,6 +178,53 @@ pub(crate) struct InputObject {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
+impl InputObject {
+    /// Break up this object into parts which will be downloaded and processed separately, in
+    /// parallel.
+    ///
+    /// The size and number of parts is controlled by the config.
+    fn into_parts(self, config: &Config) -> Vec<InputObjectPart> {
+        if self.size < config.multipart_threshold.get_bytes() as u64 {
+            // This object is too small to bother with multipart
+            vec![InputObjectPart {
+                part_number: 0,
+                byte_range: 0..self.size,
+                input_object: Arc::new(self),
+            }]
+        } else {
+            let me = Arc::new(self);
+            let mut parts = Vec::with_capacity(
+                ((me.size + config.multipart_chunk_size.get_bytes() as u64 - 1)
+                    / config.multipart_chunk_size.get_bytes() as u64) as usize,
+            );
+            let mut part_number = 0;
+            let mut byte_offset = 0u64;
+
+            while byte_offset < me.size {
+                let byte_length =
+                    (config.multipart_chunk_size.get_bytes() as u64).min(me.size - byte_offset);
+
+                parts.push(InputObjectPart {
+                    input_object: me.clone(),
+                    part_number,
+                    byte_range: byte_offset..(byte_offset + byte_length),
+                });
+
+                part_number += 1;
+                byte_offset += byte_length;
+            }
+
+            parts
+        }
+    }
+}
+
+struct InputObjectPart {
+    input_object: Arc<InputObject>,
+    part_number: usize,
+    byte_range: Range<u64>,
+}
+
 #[derive(Debug)]
 pub struct CreateArchiveJobBuilder {
     config: Config,
@@ -229,11 +279,6 @@ impl CreateArchiveJobBuilder {
     /// accessibility of the bucket will be verified by calling the object storage API prior to
     /// returning.
     pub async fn build(self) -> Result<CreateArchiveJob> {
-        if let TargetArchive::ObjectStorage(url) = &self.target {
-            // Validate this URL
-            todo!()
-        }
-
         // Expand all of the inputs into a concrete list of matching object store objects.
         //
         // This can be done in parallel for maximum winning
@@ -269,22 +314,46 @@ impl CreateArchiveJobBuilder {
         let inputs = inputs
             .into_iter()
             .dedup_by(|x, y| {
-                x.bucket.name() == y.bucket.name() && x.key == y.key && x.timestamp == y.timestamp
+                x.bucket.name() == y.bucket.name() && x.key == y.key && x.version_id == y.version_id
             })
             .collect::<Vec<_>>();
 
         Ok(CreateArchiveJob {
             config: self.config,
+            objstore_factory: self.objstore_factory,
             target: self.target,
             inputs,
         })
     }
 }
 
+/// A trait which callers can implement to get detailed progress updates as archive creation is
+/// progressing.
+pub trait ProgressCallback: Sync + Send {
+    /// Part of the data of one of the input objects was downloaded from object storage, and is
+    /// about to be written to the tar archive
+    fn input_part_downloaded(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: Option<&str>,
+        part_number: usize,
+        part_size: usize,
+    ) {
+    }
+
+    /// An entire input object was written successfully to a tar archive.
+    ///
+    /// That doesn't mean the data written has been uploaded to remote object storage yet, it could
+    /// still be buffered locally.
+    fn input_object_written(&self, bucket: &str, key: &str, version_id: Option<&str>, size: u64) {}
+}
+
 /// A job which will create a new tar archive from object store inputs.
 #[derive(Debug)]
 pub struct CreateArchiveJob {
     config: Config,
+    objstore_factory: Arc<ObjectStorageFactory>,
     target: TargetArchive,
     inputs: Vec<InputObject>,
 }
@@ -300,12 +369,226 @@ impl CreateArchiveJob {
         self.inputs.len()
     }
 
+    /// Alternative to [`Self::run`] which doesn't require a [`ProgressCallback`] implementation,
+    /// for callers that do not care about progress information.
+    pub async fn run_without_progress(self, abort: impl Future<Output = ()>) -> Result<()> {
+        // A dummy impl of ProgressCallback that doesn't do anything with any of the progress
+        // updates
+        struct NoProgress {}
+        impl ProgressCallback for NoProgress {}
+
+        self.run(abort, NoProgress {}).await
+    }
+
     /// Run the job, returning only when the job has run to completion (or failed)
     ///
-    /// If the `abort` future is completes, it's a signal that the job should be aborted.
+    /// If the `abort` future is completed, it's a signal that the job should be aborted.
     /// Existing transfers will be abandoned and queued transfers will be dropped, then this method
     /// returns an abort error.
-    pub async fn run(self, abort: impl Future<Output = ()>, progress: ()) -> Result<()> {
+    pub async fn run<Abort, Progress>(self, abort: Abort, progress: Progress) -> Result<()>
+    where
+        Abort: Future<Output = ()>,
+        Progress: ProgressCallback + 'static,
+    {
+        let total_bytes = self.total_bytes();
+        let total_objects = self.total_objects();
+
+        // Construct a writer for the target archive.
+        let writer: Box<dyn AsyncWrite + Send + Unpin> = match self.target {
+            TargetArchive::ObjectStorage(url) => {
+                // Validate the URL and get a Bucket object in the bargain
+                let objstore = self.objstore_factory.from_url(&url).await?;
+                let bucket = objstore.extract_bucket_from_url(&url).await?;
+
+                // Estimate the size of the tar archive we're going to create.  It will be the
+                // combined size of all objects in the archive, plus approx 512 bytes of overhead
+                // per object
+                let approx_archive_size = total_bytes + (total_objects as u64 * 512);
+
+                // Create a writer that will upload all written data to this object
+                Box::new(
+                    bucket
+                        .create_object_writer(url.path().to_string(), Some(approx_archive_size))
+                        .await?,
+                )
+            }
+            TargetArchive::File(path) => Box::new(
+                tokio::fs::File::create(&path)
+                    .await
+                    .with_context(|_| crate::error::WritingArchiveFileSnafu { path })?,
+            ),
+            TargetArchive::Writer(writer) => writer,
+        };
+
+        // Create the tar archive itself
+        let blocking_writer = crate::async_bridge::async_write_as_writer(writer);
+        // This mutex isn't actually needed but we operate on this tar builder in a spawned
+        // blocking task and the Rust compiler can't tell that we never access this builder from
+        // multiple threads at the same time.
+        let tar_builder = TarBuilderWrapper::new(tar::Builder::new(blocking_writer));
+
+        // Break up the input objects into one or more individual tasks (so we can use multipart
+        // download for the large objects), which we will then evaluate in parallel.
+        let parts = self
+            .inputs
+            .into_iter()
+            .flat_map(|input_object| input_object.into_parts(&self.config))
+            .collect::<Vec<_>>();
+
+        // For every one of the parts of the input objects, make a separate future that will handle
+        // downloading that part
+        let progress = Arc::new(progress);
+        let progress_clone = progress.clone();
+        let part_futs = parts.into_iter().map(move |part| {
+            let progress = progress_clone.clone();
+
+            async move {
+                let data = part
+                    .input_object
+                    .bucket
+                    .read_object_part(
+                        part.input_object.key.clone(),
+                        part.input_object.version_id.clone(),
+                        part.byte_range.clone(),
+                    )
+                    .await?;
+
+                progress.input_part_downloaded(
+                    part.input_object.bucket.name(),
+                    &part.input_object.key,
+                    part.input_object.version_id.as_deref(),
+                    part.part_number,
+                    (part.byte_range.end - part.byte_range.start) as usize,
+                );
+
+                Ok((part, data))
+            }
+        });
+
+        // Turn these futures into a Stream that yields each input part as it is downloaded.
+        // The `buffered` function does a lot of heavy lifting; it polls the specified number of
+        // futures, yielding them in the order in which they appear in the stream.  This is how we
+        // control the concurrency level, since only polled futures actually execute.
+        let mut parts_stream =
+            futures::stream::iter(part_futs).buffered(self.config.max_concurrent_requests);
+
+        // The stream `parts_stream` will only poll the futures when we call `next()` on it.  But
+        // that's not really what we want.  We want the part download futures to be working
+        // constantly, yielding downloaded parts in order.  So we need to spawn another async task
+        // whose job is to constantly poll the stream, and push completed parts into a tokio
+        // channel which will buffer the completed parts, so that the code below will always have a
+        // part to work with.
+        let (parts_sender, mut parts_receiver) =
+            tokio::sync::mpsc::channel(self.config.max_concurrent_requests);
+        tokio::spawn(async move {
+            while let Some(result) = parts_stream.next().await {
+                if let Err(_) = parts_sender.send(result).await {
+                    // The receiver was dropped, which probably means an error ocurred and we are
+                    // no longer processing parts, so nothing further to do
+                    debug!("parts channel is closed; aborting feeder task");
+                    break;
+                }
+            }
+        });
+
+        // Process the completed input object parts and write them to the tar archive.
+        // For what should be obvious reasons, the writing of data to the tar archive must be done
+        // serially, even though we downloaded the data in parallel, and the stream that the tar
+        // Builder writes to will upload the written data in paralell also.
+        loop {
+            // The next part must be part 0 of a new object
+            match parts_receiver.recv().await {
+                None => {
+                    // All parts have been read.  We're done.
+                    debug!("Completed processing of all input objects");
+                    break;
+                }
+
+                Some(result) => {
+                    // The first part of a new object has been downloaded
+                    let (mut part, data) = result?;
+
+                    assert_eq!(0, part.part_number, "BUG: the parts are completing out of order or there's a logic error in this loop");
+
+                    debug!(key = %part.input_object.key, size = part.input_object.size, "Reading object and writing to tar archive");
+
+                    // This is a new object which means we need to write it to the tar archive.
+                    // But we only have the first part, how can we write to tar now?  Don't we need
+                    // to buffer in memory until the whole object is read?
+                    //
+                    // NO! `append_data` takes a `Read` instance which it will use to read the data
+                    // before writing it to the tar stream.  Here we'll construct just such a
+                    // `Read` impl, which is fed by a tokio channel receiver.  The other end of
+                    // that receiver is held by us, polling the `parts_stream` and feeding each of
+                    // the parts we read into the channel.  These things can happen in parallel
+                    // because the call to `append_data` is blocking, so anyway it needs to be run
+                    // in a separate async task by `spawn_blocking`.
+                    let (sender, receiver) = tokio::sync::mpsc::channel::<Result<bytes::Bytes>>(1);
+                    let blocking_reader = crate::async_bridge::stream_as_reader(
+                        tokio_stream::wrappers::ReceiverStream::new(receiver),
+                    );
+                    let tar_builder = tar_builder.clone();
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(part.input_object.size);
+                    // TODO: translate the object timestamp into a UNIX timestamp and set mtime
+                    // here
+                    header.set_cksum();
+
+                    let object_path = part.input_object.key.clone();
+                    let append_fut =
+                        tar_builder.spawn_append_data(header, object_path, blocking_reader);
+
+                    // The `append_data` call is now running in a worker thread.  It will keep
+                    // running until the `blocking_reader`'s `read` method indicates EOF, and that
+                    // won't happen until this `sender` gets dropped.  So process all of the parts
+                    // for this input object now, writing them into the channel which will
+                    // ultimately yield them to `blocking_reader` and thus to the `append_data`
+                    // method running in the worker thread.
+                    sender.send(Ok(data)).await;
+
+                    while part.byte_range.end < part.input_object.size {
+                        let (next_part, data) =
+                            parts_receiver.recv().await.unwrap_or_else(|| {
+                                panic!(
+                                    "BUG: stream ended prematurely after part {} of input {}",
+                                    part.part_number, part.input_object.key
+                                )
+                            })?;
+
+                        assert_eq!(next_part.input_object.key, part.input_object.key);
+                        assert_eq!(next_part.part_number, part.part_number + 1);
+                        assert_eq!(next_part.byte_range.start, part.byte_range.end);
+
+                        sender.send(Ok(data)).await;
+
+                        part = next_part;
+                    }
+
+                    // All of the data for this object has been passed to the `blocking_reader`
+                    // that `append_data` is reading.  Now we just wait for it to finish
+                    drop(sender);
+                    append_fut.await?;
+
+                    progress.input_object_written(
+                        part.input_object.bucket.name(),
+                        &part.input_object.key,
+                        part.input_object.version_id.as_deref(),
+                        part.input_object.size,
+                    );
+
+                    debug!(key = %part.input_object.key,
+                        size = part.input_object.size,
+                        final_part_number = part.part_number,
+                        "Streamed object data into tar archive");
+                }
+            }
+        }
+
+        // Finalize the tar archive
+        tar_builder.finish_and_close().await?;
+
+        // Next steps: the writer is probably still busily uploading data.  Need a way to get
+        // visibility into that and block until the upload is done.
         todo!()
     }
 }

@@ -136,7 +136,7 @@ impl Command {
                 } else if let Some(url) = s3 {
                     TargetArchive::ObjectStorage(url)
                 } else if stdout {
-                    TargetArchive::Writer(Arc::new(tokio::io::stdout()))
+                    TargetArchive::Writer(Box::new(tokio::io::stdout()))
                 } else {
                     unreachable!(
                         "BUG: clap should require the user to specify exactly one of these options"
@@ -151,8 +151,14 @@ impl Command {
 
                 let job = builder.build().await?;
 
+                println!(
+                    "Creating archive with {} of data from {} objects",
+                    byte_unit::Byte::from_bytes(job.total_bytes().into())
+                        .get_appropriate_unit(true),
+                    job.total_objects()
+                );
                 println!("TODO: implement job");
-                job.run(futures::future::pending(), ()).await?;
+                job.run_without_progress(futures::future::pending()).await?;
 
                 Ok(())
             }

@@ -5,8 +5,9 @@ use aws_smithy_http::endpoint::Endpoint;
 use aws_types::region::Region;
 use futures::{Stream, StreamExt};
 use snafu::{prelude::*, IntoError};
-use std::{any::Any, sync::Arc};
-use tracing::debug;
+use std::{any::Any, ops::Range, sync::Arc};
+use tokio::io::DuplexStream;
+use tracing::{debug, instrument};
 use url::Url;
 
 /// Implementation of [`ObjectStorage`] for S3 and S3-compatible APIs
@@ -327,25 +328,27 @@ impl Bucket for S3Bucket {
         match selector {
             create::ObjectSelector::Object { key, version_id } => {
                 // This is the easy case.  The user has explicitly specified a single object.
-                debug!(%key, bucket = %self.inner.name, "Archive input matches a single S3 object");
+                let key = Self::url_path_to_s3_path(&key);
+
+                debug!(key, bucket = %self.inner.name, "Archive input matches a single S3 object");
 
                 let metadata = self
                     .inner
                     .client
                     .head_object()
                     .bucket(&self.inner.name)
-                    .key(Self::url_path_to_s3_path(&key))
+                    .key(key)
                     .set_version_id(version_id)
                     .send()
                     .await
                     .with_context(|_| crate::error::HeadObjectSnafu {
                         bucket: self.inner.name.clone(),
-                        key: key.clone(),
+                        key: key.to_string(),
                     })?;
 
                 Ok(vec![create::InputObject {
                     bucket: dyn_clone::clone_box(self),
-                    key,
+                    key: key.to_string(),
                     version_id: metadata.version_id().map(|id| id.to_string()),
                     size: metadata.content_length() as u64,
                     timestamp: metadata
@@ -356,7 +359,8 @@ impl Bucket for S3Bucket {
             }
             create::ObjectSelector::Prefix { prefix } => {
                 // Enumerate all objects within this prefix
-                debug!(bucket = %self.inner.name, %prefix, "Archive input matches all S3 objects with a certain prefix");
+                let prefix = Self::url_path_to_s3_path(&prefix);
+                debug!(bucket = %self.inner.name, prefix, "Archive input matches all S3 objects with a certain prefix");
 
                 // Use the paginated API to automatically handle dealing with continuation tokens
                 let pages = self
@@ -364,7 +368,7 @@ impl Bucket for S3Bucket {
                     .client
                     .list_objects_v2()
                     .bucket(&self.inner.name)
-                    .prefix(Self::url_path_to_s3_path(&prefix))
+                    .prefix(prefix)
                     .into_paginator()
                     .send();
 
@@ -373,7 +377,7 @@ impl Bucket for S3Bucket {
                 let objects = pages.map(|result| {
                     let page = result.with_context(|_| crate::error::ListObjectsInPrefixSnafu {
                         bucket: self.inner.name.clone(),
-                        prefix: prefix.clone(),
+                        prefix: prefix.to_string(),
                     })?;
 
                     // NOTE: the `contents()` accessor returns a slice, but the `contents` field is
@@ -389,7 +393,7 @@ impl Bucket for S3Bucket {
 
                 let input_objects = self.objects_to_input_objects(objects).await?;
 
-                debug!(input_objects = input_objects.len(), bucket = %self.inner.name, %prefix, "Matched all S3 objects with a certain prefix");
+                debug!(input_objects = input_objects.len(), bucket = %self.inner.name, prefix, "Matched all S3 objects with a certain prefix");
 
                 Ok(input_objects)
             }
@@ -447,18 +451,19 @@ impl Bucket for S3Bucket {
                 // bucket just like it does, but filter each individual object to see if it matches
                 // the glob expression
 
+                // Before parsing the glob pattern, it needs to be translated from URL path to an
+                // object name, as all other object keys are
+                let pattern = Self::url_path_to_s3_path(&pattern);
+
                 debug!(
                     bucket = %self.inner.name,
-                    glob = %pattern,
+                    glob = pattern,
                     "Archive input matches objects in a bucket which match a glob pattern"
                 );
 
-                // Before parsing the glob pattern, it needs to be translated from URL path to an
-                // object name, as all other object keys are
-                let s3_pattern = Self::url_path_to_s3_path(&pattern);
-                let pattern = glob::Pattern::new(s3_pattern).with_context(|_| {
+                let pattern = glob::Pattern::new(pattern).with_context(|_| {
                     crate::error::InvalidGlobPatternSnafu {
-                        pattern: s3_pattern.to_string(),
+                        pattern: pattern.to_string(),
                     }
                 })?;
 
@@ -511,6 +516,54 @@ impl Bucket for S3Bucket {
                 Ok(input_objects)
             }
         }
+    }
+
+    #[instrument(skip(self))]
+    async fn read_object_part(
+        &self,
+        key: String,
+        version_id: Option<String>,
+        byte_range: Range<u64>,
+    ) -> Result<bytes::Bytes> {
+        debug!("Reading partial object");
+
+        let key = Self::url_path_to_s3_path(&key);
+
+        let response = self
+            .inner
+            .client
+            .get_object()
+            .bucket(&self.inner.name)
+            .key(key)
+            .range(format!("bytes={}-{}", byte_range.start, byte_range.end - 1))
+            .set_version_id(version_id.clone())
+            .send()
+            .await
+            .with_context(|_| crate::error::GetObjectSnafu {
+                bucket: self.inner.name.clone(),
+                key: key.to_string(),
+                version_id: version_id.clone(),
+            })?;
+
+        let bytes =
+            response
+                .body
+                .collect()
+                .await
+                .with_context(|_| crate::error::ReadByteStreamSnafu {
+                    bucket: self.inner.name.clone(),
+                    key: key.to_string(),
+                })?;
+
+        Ok(bytes.into_bytes())
+    }
+
+    async fn create_object_writer(
+        &self,
+        key: String,
+        size_hint: Option<u64>,
+    ) -> Result<DuplexStream> {
+        todo!()
     }
 }
 
