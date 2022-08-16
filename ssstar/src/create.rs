@@ -329,10 +329,96 @@ impl CreateArchiveJobBuilder {
 
 /// A trait which callers can implement to get detailed progress updates as archive creation is
 /// progressing.
+#[allow(unused_variables)]
 pub trait ProgressCallback: Sync + Send {
-    /// Part of the data of one of the input objects was downloaded from object storage, and is
-    /// about to be written to the tar archive
+    /// The download of a new input object is starting.
+    ///
+    /// In truth downloads happen in parallel, but they are yielded in precisely the order they
+    /// will appear in the tar archive, so for progress reporting purposes when the first part of
+    /// an input object is available for writing to the tar archive, we say the download of that
+    /// object has started.
+    fn input_object_download_started(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: Option<&str>,
+        size: u64,
+    ) {
+    }
+
+    /// Part of the data of one of the input objects was downloaded from object storage.
+    ///
+    /// Unlike the started and completed events, which are generated from an ordered sequence of
+    /// input object part downloads, this event is reported as soon as the bytes come down the wire
+    /// for a part.  Because of how concurrent tasks are executed, it's possible that part 10 of an
+    /// object downloads first, before part 0.  This event fires as soon as part 10 has finished
+    /// downloading, but the started event won't fire until part 0 finishes.
+    ///
+    /// For an event that is guaranteed to fire after `started` and before `completed`, see
+    /// `input_part_downloaded`
+    fn input_part_unordered_downloaded(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: Option<&str>,
+        part_number: usize,
+        part_size: usize,
+    ) {
+    }
+
+    /// Part of the data of one of the input objects was downloaded from object storage.
+    ///
+    /// unlike `input_part_unordered_downloaded`, this event doesn't fire the moment the part is
+    /// downloaded over the wire, but only when that part becomes available on the stream of input
+    /// object parts in order.  For rendering a progress bar of the progress of downloading an
+    /// object, this is what you want, but it might be the case that this part actually was
+    /// downloaded into memory several seconds ago, or possibly longer for slow networks.
     fn input_part_downloaded(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: Option<&str>,
+        part_number: usize,
+        part_size: usize,
+    ) {
+    }
+
+    /// An entire input object has been downloaded successfully
+    fn input_object_download_completed(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: Option<&str>,
+        size: u64,
+    ) {
+    }
+
+    /// All input objects have now been downloaded.
+    ///
+    /// That doesn't mean the work is done; there can still be ongoing tasks either writing some of
+    /// that downloaded data to the tar builder, or uploading writes to the tar archive to object
+    /// storage.
+    fn input_objects_download_completed(&self, total_bytes: u64) {}
+
+    /// The tar archive has been initialized but not yet written to.
+    ///
+    /// The `total_*` args refer to the number and total size of all input objects which are to be
+    /// written to this archive.  It's hard to predict the actual tar archive size without getting
+    /// into the weeds of the tar archive format, but an estimated size is provided to help scale
+    /// progress bars in the UI.
+    fn tar_archive_initialized(
+        &self,
+        total_objects: usize,
+        total_bytes: u64,
+        estimated_archive_size: u64,
+    ) {
+    }
+
+    /// Part of the data of one of the input objects has been written to the tar archive
+    ///
+    /// That doesn't mean the data written has been uploaded to remote object storage yet, it could
+    /// still be buffered locally.
+    fn tar_archive_part_written(
         &self,
         bucket: &str,
         key: &str,
@@ -346,7 +432,34 @@ pub trait ProgressCallback: Sync + Send {
     ///
     /// That doesn't mean the data written has been uploaded to remote object storage yet, it could
     /// still be buffered locally.
-    fn input_object_written(&self, bucket: &str, key: &str, version_id: Option<&str>, size: u64) {}
+    fn tar_archive_object_written(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: Option<&str>,
+        size: u64,
+    ) {
+    }
+
+    /// The tar builder has written some bytes to the [`std::io::Write`] instance that it's layered
+    /// on top of.
+    ///
+    /// This event happens after a `tar_archive_part_written` event and sees the total number of
+    /// bytes written, including any tar headers.
+    fn tar_archive_bytes_written(&self, bytes_written: u64) {}
+
+    /// The tar archive has been completed, and will see no further writes.
+    ///
+    /// There may still be upload activity in process, uploading previous tar writes to object
+    /// storage from a local buffer.
+    fn tar_archive_writes_completed(&self, total_bytes_written: u64) {}
+
+    /// The tar archive's previously completed writes have all been flushed from their buffers and
+    /// uploaded to object storage (or a file or a stream dependng on where the tar archive is
+    /// located).
+    ///
+    /// This is the final event that can happen.  Once this event fires, the job is done.
+    fn tar_archive_upload_completed(&self, size: u64) {}
 }
 
 /// A job which will create a new tar archive from object store inputs.
@@ -390,8 +503,14 @@ impl CreateArchiveJob {
         Abort: Future<Output = ()>,
         Progress: ProgressCallback + 'static,
     {
+        let progress: Arc<dyn ProgressCallback> = Arc::new(progress);
         let total_bytes = self.total_bytes();
         let total_objects = self.total_objects();
+
+        // Estimate the size of the tar archive we're going to create.  It will be the
+        // combined size of all objects in the archive, plus approx 512 bytes of overhead
+        // per object
+        let approx_archive_size = total_bytes + (total_objects as u64 * 512);
 
         // Construct a writer for the target archive.
         let writer: Box<dyn AsyncWrite + Send + Unpin> = match self.target {
@@ -399,11 +518,6 @@ impl CreateArchiveJob {
                 // Validate the URL and get a Bucket object in the bargain
                 let objstore = self.objstore_factory.from_url(&url).await?;
                 let bucket = objstore.extract_bucket_from_url(&url).await?;
-
-                // Estimate the size of the tar archive we're going to create.  It will be the
-                // combined size of all objects in the archive, plus approx 512 bytes of overhead
-                // per object
-                let approx_archive_size = total_bytes + (total_objects as u64 * 512);
 
                 // Create a writer that will upload all written data to this object
                 Box::new(
@@ -425,10 +539,13 @@ impl CreateArchiveJob {
         // This mutex isn't actually needed but we operate on this tar builder in a spawned
         // blocking task and the Rust compiler can't tell that we never access this builder from
         // multiple threads at the same time.
-        let tar_builder = TarBuilderWrapper::new(tar::Builder::new(blocking_writer));
+        let tar_builder = TarBuilderWrapper::new(blocking_writer, progress.clone());
+
+        progress.tar_archive_initialized(total_objects, total_bytes, approx_archive_size);
 
         // Break up the input objects into one or more individual tasks (so we can use multipart
         // download for the large objects), which we will then evaluate in parallel.
+        #[allow(clippy::needless_collect)] // collect is needed to avoid lifetime issues with `self`
         let parts = self
             .inputs
             .into_iter()
@@ -437,7 +554,6 @@ impl CreateArchiveJob {
 
         // For every one of the parts of the input objects, make a separate future that will handle
         // downloading that part
-        let progress = Arc::new(progress);
         let progress_clone = progress.clone();
         let part_futs = parts.into_iter().map(move |part| {
             let progress = progress_clone.clone();
@@ -453,7 +569,7 @@ impl CreateArchiveJob {
                     )
                     .await?;
 
-                progress.input_part_downloaded(
+                progress.input_part_unordered_downloaded(
                     part.input_object.bucket.name(),
                     &part.input_object.key,
                     part.input_object.version_id.as_deref(),
@@ -480,16 +596,53 @@ impl CreateArchiveJob {
         // part to work with.
         let (parts_sender, mut parts_receiver) =
             tokio::sync::mpsc::channel(self.config.max_concurrent_requests);
-        tokio::spawn(async move {
-            while let Some(result) = parts_stream.next().await {
-                if let Err(_) = parts_sender.send(result).await {
-                    // The receiver was dropped, which probably means an error ocurred and we are
-                    // no longer processing parts, so nothing further to do
-                    debug!("parts channel is closed; aborting feeder task");
-                    break;
+        {
+            let progress = progress.clone();
+
+            tokio::spawn(async move {
+                while let Some(result) = parts_stream.next().await {
+                    // Part downloads are yield from the stream in the order in which they appeared,
+                    // which means all parts for an object proceed from 0 to the last one, in order.
+                    // If the download of an entire object has completed, report it here
+                    if let Ok((part, _data)) = &result {
+                        if part.part_number == 0 {
+                            // This is the start of an input object download
+                            progress.input_object_download_started(
+                                part.input_object.bucket.name(),
+                                &part.input_object.key,
+                                part.input_object.version_id.as_deref(),
+                                part.input_object.size,
+                            );
+                        }
+
+                        progress.input_part_downloaded(
+                            part.input_object.bucket.name(),
+                            &part.input_object.key,
+                            part.input_object.version_id.as_deref(),
+                            part.part_number,
+                            (part.byte_range.end - part.byte_range.start) as usize,
+                        );
+
+                        if part.byte_range.end == part.input_object.size {
+                            // This is the final part
+                            progress.input_object_download_completed(
+                                part.input_object.bucket.name(),
+                                &part.input_object.key,
+                                part.input_object.version_id.as_deref(),
+                                part.input_object.size,
+                            );
+                        }
+                    }
+
+                    if (parts_sender.send(result).await).is_err() {
+                        // The receiver was dropped, which probably means an error ocurred and we are
+                        // no longer processing parts, so nothing further to do
+                        debug!("parts channel is closed; aborting feeder task");
+                        break;
+                    }
                 }
-            }
-        });
+            });
+        }
 
         // Process the completed input object parts and write them to the tar archive.
         // For what should be obvious reasons, the writing of data to the tar archive must be done
@@ -544,24 +697,54 @@ impl CreateArchiveJob {
                     // for this input object now, writing them into the channel which will
                     // ultimately yield them to `blocking_reader` and thus to the `append_data`
                     // method running in the worker thread.
-                    sender.send(Ok(data)).await;
+                    //
+                    // If for some reason there's an error in the `append_data` operation, which
+                    // could happen if there's a problem reading data or a problem writing to the
+                    // tar writer, then the append future might exit early, dropping the receiver
+                    // and causing `sender.send` to fail.  If that happens, the actual cause of the
+                    // error isn't in the error from `send`, but in th eresult of `append_fut`.  So
+                    // a failure to write to the sender is a sign we should stop what we're doing
+                    // and wait for the appender to stop
+                    let mut appender_aborted = false;
+                    if (sender.send(Ok(data)).await).is_ok() {
+                        progress.tar_archive_part_written(
+                            part.input_object.bucket.name(),
+                            &part.input_object.key,
+                            part.input_object.version_id.as_deref(),
+                            part.part_number,
+                            (part.byte_range.end - part.byte_range.start) as usize,
+                        );
 
-                    while part.byte_range.end < part.input_object.size {
-                        let (next_part, data) =
-                            parts_receiver.recv().await.unwrap_or_else(|| {
-                                panic!(
-                                    "BUG: stream ended prematurely after part {} of input {}",
-                                    part.part_number, part.input_object.key
-                                )
-                            })?;
+                        while part.byte_range.end < part.input_object.size {
+                            let (next_part, data) =
+                                parts_receiver.recv().await.unwrap_or_else(|| {
+                                    panic!(
+                                        "BUG: stream ended prematurely after part {} of input {}",
+                                        part.part_number, part.input_object.key
+                                    )
+                                })?;
 
-                        assert_eq!(next_part.input_object.key, part.input_object.key);
-                        assert_eq!(next_part.part_number, part.part_number + 1);
-                        assert_eq!(next_part.byte_range.start, part.byte_range.end);
+                            assert_eq!(next_part.input_object.key, part.input_object.key);
+                            assert_eq!(next_part.part_number, part.part_number + 1);
+                            assert_eq!(next_part.byte_range.start, part.byte_range.end);
 
-                        sender.send(Ok(data)).await;
+                            if (sender.send(Ok(data)).await).is_err() {
+                                appender_aborted = true;
+                                break;
+                            } else {
+                                progress.tar_archive_part_written(
+                                    part.input_object.bucket.name(),
+                                    &part.input_object.key,
+                                    part.input_object.version_id.as_deref(),
+                                    part.part_number,
+                                    (part.byte_range.end - part.byte_range.start) as usize,
+                                );
+                            }
 
-                        part = next_part;
+                            part = next_part;
+                        }
+                    } else {
+                        appender_aborted = true;
                     }
 
                     // All of the data for this object has been passed to the `blocking_reader`
@@ -569,7 +752,15 @@ impl CreateArchiveJob {
                     drop(sender);
                     append_fut.await?;
 
-                    progress.input_object_written(
+                    // Normally this is what we want to hear, but if the appender dropped
+                    // the channel that means we weren't able to send all of the parts to
+                    // the tar appender task so we expect a failure here
+                    assert!(
+                        !appender_aborted,
+                        "BUG: data channel for writing to tar archive was closed without any error"
+                    );
+
+                    progress.tar_archive_object_written(
                         part.input_object.bucket.name(),
                         &part.input_object.key,
                         part.input_object.version_id.as_deref(),
@@ -585,7 +776,9 @@ impl CreateArchiveJob {
         }
 
         // Finalize the tar archive
-        tar_builder.finish_and_close().await?;
+        let bytes_written = tar_builder.finish_and_close().await?;
+
+        progress.tar_archive_writes_completed(bytes_written);
 
         // Next steps: the writer is probably still busily uploading data.  Need a way to get
         // visibility into that and block until the upload is done.

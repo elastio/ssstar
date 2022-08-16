@@ -1,6 +1,8 @@
+use crate::create;
 use crate::Result;
 use futures::FutureExt;
 use snafu::{IntoError, ResultExt};
+use std::io::Write;
 use std::{
     future::Future,
     path::PathBuf,
@@ -23,19 +25,21 @@ use tracing::{error, warn};
 /// It stores the builder as `Option` not because there might not be a builder, but because in
 /// order to implement `drop` correctly we need to transfer ownership of the builder to a sync
 /// context.
-pub(crate) struct TarBuilderWrapper<W: std::io::Write + Send + 'static>(
-    Option<Arc<Mutex<tar::Builder<W>>>>,
-);
+pub(crate) struct TarBuilderWrapper<W: std::io::Write + Send + 'static> {
+    builder: Option<Arc<Mutex<tar::Builder<CountingWriter<W>>>>>,
+}
 
 impl<W: std::io::Write + Send + 'static> Clone for TarBuilderWrapper<W> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self {
+            builder: self.builder.clone(),
+        }
     }
 }
 
 impl<W: std::io::Write + Send + 'static> Drop for TarBuilderWrapper<W> {
     fn drop(&mut self) {
-        if let Some(builder) = self.0.take() {
+        if let Some(builder) = self.builder.take() {
             // This type gets cloned frequently so it can be used in multiple async tasks in
             // paralell.  The drop logic we want to apply to the tar builder requires exclusive
             // ownership.  So don't proceed unless this is the last instance
@@ -70,8 +74,13 @@ impl<W: std::io::Write + Send + 'static> Drop for TarBuilderWrapper<W> {
 
 impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
     /// Wrap a [`tar::Builder`] so it can be safely used in an async context
-    pub fn new(builder: tar::Builder<W>) -> Self {
-        Self(Some(Arc::new(Mutex::new(builder))))
+    pub fn new(writer: W, progress: Arc<dyn create::ProgressCallback>) -> Self {
+        // Wrap this writer in our own writer which counts bytes written and reports progress
+        let writer = CountingWriter::new(writer, progress);
+
+        Self {
+            builder: Some(Arc::new(Mutex::new(tar::Builder::new(writer)))),
+        }
     }
 
     /// Spawn a blocking task to append data to the tar archive, but don't wait for the task to
@@ -99,7 +108,7 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
     /// async context.
     pub fn with_builder_mut<F, T>(&self, f: F) -> impl Future<Output = Result<T>>
     where
-        F: FnOnce(&mut tar::Builder<W>) -> Result<T> + Send + 'static,
+        F: FnOnce(&mut tar::Builder<CountingWriter<W>>) -> Result<T> + Send + 'static,
         T: Send + 'static,
     {
         let builder = self.builder();
@@ -113,10 +122,12 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
 
     /// Tell the builder that we're finished writing to it, flush the underlying writer, and drop
     /// in sync context to avoid panics.
-    pub async fn finish_and_close(mut self) -> Result<()> {
+    ///
+    /// On success, returns the total number of bytes written to the underlying `Write` impl
+    pub async fn finish_and_close(mut self) -> Result<u64> {
         // This is handled by the `Drop` impl.  We provide an explicit method for it just for
         // clarity in the code, since code in Drop feels like spooky action at a distance.
-        if let Some(builder) = self.0.take() {
+        if let Some(builder) = self.builder.take() {
             // It's a bug to call this when there are any other clones of this type floating around
             let builder = Arc::try_unwrap(builder)
                 .unwrap_or_else(|_| panic!("BUG: all tar builder clones should be dropped by now"))
@@ -124,16 +135,16 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
                 .unwrap();
             Self::drop_builder_async(builder).await
         } else {
-            Ok(())
+            unreachable!("BUG: builder already dropped before call to finish_and_close")
         }
     }
 
-    fn builder(&self) -> Arc<Mutex<tar::Builder<W>>> {
-        self.0.clone().expect("BUG: already dropped")
+    fn builder(&self) -> Arc<Mutex<tar::Builder<CountingWriter<W>>>> {
+        self.builder.clone().expect("BUG: already dropped")
     }
 
     /// Do the same work as [`Self::drop_builder`], but from an async context
-    async fn drop_builder_async(builder: tar::Builder<W>) -> Result<()> {
+    async fn drop_builder_async(builder: tar::Builder<CountingWriter<W>>) -> Result<u64> {
         // Dropping whilst in an async context.
         let fut = tokio::task::spawn_blocking(move || Self::drop_builder(builder));
 
@@ -150,13 +161,13 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
 
                 Err(e)
             }
-            Ok(Ok(())) => Ok(()),
+            Ok(Ok(bytes_written)) => Ok(bytes_written),
         }
     }
 
     /// Destroy the `tar::Builder` in a guaranteed synchronous context so blocking calls to the
     /// writer are fine.
-    fn drop_builder(builder: tar::Builder<W>) -> Result<()> {
+    fn drop_builder(builder: tar::Builder<CountingWriter<W>>) -> Result<u64> {
         let mut blocking_writer = builder
             .into_inner()
             .with_context(|_| crate::error::FlushSnafu {})?;
@@ -165,6 +176,42 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
         // `into_inner`.  So to be on the safe side, we need to flush it here
         blocking_writer
             .flush()
-            .with_context(|_| crate::error::FlushSnafu {})
+            .with_context(|_| crate::error::FlushSnafu {})?;
+
+        Ok(blocking_writer.total_bytes_written)
+    }
+}
+
+/// A wrapper around an arbitrary [`std::io::Write`] which counts how many bytes are written to the
+/// underlying writer and reports them to the [`create::ProgressCallback`] callback method
+pub(crate) struct CountingWriter<W: std::io::Write + Send + 'static> {
+    inner: W,
+    progress: Arc<dyn create::ProgressCallback>,
+    total_bytes_written: u64,
+}
+
+impl<W: std::io::Write + Send + 'static> CountingWriter<W> {
+    fn new(writer: W, progress: Arc<dyn create::ProgressCallback>) -> Self {
+        Self {
+            inner: writer,
+            progress,
+            total_bytes_written: 0,
+        }
+    }
+}
+
+impl<W: std::io::Write + Send + 'static> std::io::Write for CountingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let bytes_written = self.inner.write(buf)?;
+
+        self.total_bytes_written += bytes_written as u64;
+        self.progress
+            .tar_archive_bytes_written(bytes_written as u64);
+
+        Ok(bytes_written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
