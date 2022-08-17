@@ -1,9 +1,9 @@
 use crate::{create, Config, Result};
 use dyn_clone::DynClone;
 use once_cell::sync::OnceCell;
-use snafu::prelude::*;
+
 use std::{any::Any, ops::Range, sync::Arc};
-use tokio::io::{AsyncWrite, DuplexStream};
+use tokio::io::{DuplexStream};
 use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
@@ -132,6 +132,7 @@ impl ObjectStorageFactory {
     /// it.
     ///
     /// If the URL isn't recognized as being supported by ssstar, an error is returned
+    #[allow(clippy::wrong_self_convention)] // For a factory object I think it's obvious what this means
     pub async fn from_url(&self, url: &Url) -> Result<Arc<dyn ObjectStorage>> {
         if url.scheme() == "s3" {
             Ok(self.s3().await)

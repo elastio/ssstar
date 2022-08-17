@@ -6,10 +6,10 @@
 //! of a certain size for later uploading to object storage via the multipart upload APIs, and the
 //! other [`unipart`] buffers the entire data written into memory and yields a single chunk
 //! containing all the data.
-use crate::{Config, Result};
+
 use bytes::Bytes;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
+    io::{AsyncReadExt, DuplexStream},
     sync::{mpsc, oneshot},
 };
 use tracing::{debug, warn};

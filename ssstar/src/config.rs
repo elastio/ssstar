@@ -3,7 +3,7 @@ use url::Url;
 /// The configuration settings that control the behavior of archive creation and extraction.
 ///
 ///
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 pub struct Config {
     /// Use a custom S3 endpoint instead of AWS.

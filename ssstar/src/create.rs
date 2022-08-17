@@ -1,19 +1,18 @@
 //! Implementation of the operation which creates a tar archive from inputs stored in object
 //! storage.
-use crate::objstore::{Bucket, ObjectStorage, ObjectStorageFactory};
+use crate::objstore::{Bucket, ObjectStorageFactory};
 use crate::tar::TarBuilderWrapper;
-use crate::{Config, Result, S3TarError};
-use futures::{StreamExt, TryStream, TryStreamExt};
+use crate::{Config, Result};
+use futures::StreamExt;
 use itertools::Itertools;
 use snafu::prelude::*;
 use std::future::Future;
-use std::io::Write;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::io::AsyncWrite;
-use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, instrument, error};
+use tokio::sync::oneshot;
+use tracing::{debug, error, instrument};
 use url::Url;
 
 /// Represents where we will write the target archive
@@ -514,7 +513,7 @@ impl CreateArchiveJob {
     /// If the `abort` future is completed, it's a signal that the job should be aborted.
     /// Existing transfers will be abandoned and queued transfers will be dropped, then this method
     /// returns an abort error.
-    pub async fn run<Abort, Progress>(self, abort: Abort, progress: Progress) -> Result<()>
+    pub async fn run<Abort, Progress>(self, _abort: Abort, progress: Progress) -> Result<()>
     where
         Abort: Future<Output = ()>,
         Progress: ProgressCallback + 'static,

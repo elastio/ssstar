@@ -8,10 +8,7 @@
 use crate::Result;
 use bytes::{buf::Reader, Buf, Bytes};
 use futures::{Stream, StreamExt};
-use std::{
-    io::{Cursor, Read, Write},
-    pin::Pin,
-};
+use std::{io::Read, pin::Pin};
 use tokio::io::AsyncWrite;
 
 /// Given a [`Stream`] impl that yields vecs of bytes, produce a [`Read`] implementation that will
@@ -112,6 +109,7 @@ impl Read for TryStreamReader {
 mod tests {
     use super::*;
     use rand::prelude::*;
+    use std::io::Cursor;
 
     /// Exercise the `TryStreamReader` type using some in-memory buffers
     ///

@@ -1,6 +1,6 @@
 use clap::{ArgGroup, Parser, Subcommand};
 use ssstar::{CreateArchiveJobBuilder, TargetArchive};
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf};
 use tracing::debug;
 use url::Url;
 
@@ -163,10 +163,10 @@ impl Command {
                 Ok(())
             }
             Self::Extract {
-                file,
-                s3,
-                stdin,
-                target,
+                file: _,
+                s3: _,
+                stdin: _,
+                target: _,
             } => {
                 todo!()
             }

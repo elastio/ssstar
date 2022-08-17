@@ -3,7 +3,7 @@ use crate::{create, Config, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_smithy_http::endpoint::Endpoint;
 use aws_types::region::Region;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt};
 use snafu::{prelude::*, IntoError};
 use std::{any::Any, ops::Range, sync::Arc};
 use tokio::io::DuplexStream;
@@ -151,15 +151,6 @@ impl S3Bucket {
         })
     }
 
-    /// Attempt to downcast a dyn trait `Bucket` implementation into an instance of this type.
-    ///
-    /// Panics with a meaningful error if `me` isn't an instance of `S3Bucket`
-    fn from_dyn_trait(me: &dyn Bucket) -> &Self {
-        me.as_any()
-            .downcast_ref::<Self>()
-            .expect("BUG: attempt to use a different impl of `Bucket` in place of `S3Bucket`")
-    }
-
     /// Perform a HEAD operation on an object to get its current version ID if versioning is
     /// enabled on the bucket.
     ///
@@ -207,7 +198,7 @@ impl S3Bucket {
             // Process the objects in this page of listings in parallel, since the call
             // to get the object version ID can have surprisingly high latency
             let object_futs = objects.into_iter().map(|object| {
-                let bucket = self.inner.name.clone();
+                let _bucket = self.inner.name.clone();
                 let key = object
                     .key()
                     .expect("BUG: all objects have keys")
@@ -388,7 +379,7 @@ impl S3Bucket {
     async fn unipart_object_writer(
         &self,
         key: String,
-        mut chunks_receiver: oneshot::Receiver<bytes::Bytes>,
+        chunks_receiver: oneshot::Receiver<bytes::Bytes>,
         progress_sender: mpsc::UnboundedSender<u64>,
     ) -> Result<u64> {
         // It seems a bit clumsy to do this single chunk upload in an async background task instead
@@ -419,6 +410,8 @@ impl S3Bucket {
                 bucket: self.inner.name.clone(),
                 key: key.clone(),
             })?;
+
+        let _ = progress_sender.send(total_bytes);
 
         Ok(total_bytes)
     }
@@ -914,12 +907,9 @@ async fn make_s3_client(config: &Config, region: impl Into<Option<String>>) -> a
 
         s3_config_builder = s3_config_builder.endpoint_resolver(Endpoint::immutable(uri));
     }
-    let aws_client = aws_sdk_s3::Client::from_conf(s3_config_builder.build());
 
-    aws_client
+    aws_sdk_s3::Client::from_conf(s3_config_builder.build())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-}
+mod tests {}
