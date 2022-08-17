@@ -3,11 +3,12 @@ use crate::{create, Config, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_smithy_http::endpoint::Endpoint;
 use aws_types::region::Region;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use snafu::{prelude::*, IntoError};
 use std::{any::Any, ops::Range, sync::Arc};
 use tokio::io::DuplexStream;
-use tracing::{debug, instrument};
+use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, error, instrument, warn, Instrument};
 use url::Url;
 
 /// Implementation of [`ObjectStorage`] for S3 and S3-compatible APIs
@@ -245,6 +246,181 @@ impl S3Bucket {
         }
 
         Ok(input_objects)
+    }
+
+    /// Upload the object identified by `key` using the S3 multipart upload APIs
+    ///
+    /// The chunks to upload are obtained from a writer task and exposed via `chunks_receiver`.
+    ///
+    /// The `progress_sender` should be sent an update whenever a chunk is successfully uploaded.
+    /// The update is just the number of bytes uploaded for that chunk.  Note that some callers
+    /// don't care about updates and will drop the corresponding progress receiver, so a failure to
+    /// send on this channel should be ignored.
+    #[instrument(skip(self, chunks_receiver, progress_sender), fields(bucket = %self.inner.name))]
+    async fn multipart_object_writer(
+        &self,
+        key: String,
+        upload_id: String,
+        chunks_receiver: mpsc::Receiver<crate::writers::MultipartChunk>,
+        progress_sender: mpsc::UnboundedSender<u64>,
+    ) -> Result<u64> {
+        // `Receiver` can be made to implement `Stream` which will let us move the heavy lifting
+        // off onto `futures`
+        let chunks = tokio_stream::wrappers::ReceiverStream::new(chunks_receiver);
+
+        let chunk_futs = chunks.map(|chunk| {
+            // Our chunking code numbers multipart chunks from 0, but the S3 API expects them
+            // to be numbered from 1
+            let part_number = chunk.part_number + 1;
+            let chunk_size = chunk.data.len();
+
+            let span = tracing::debug_span!("upload chunk", part_number, chunk_size);
+            let me = self.clone();
+            let key = key.clone();
+            let upload_id = upload_id.clone();
+            let progress_sender = progress_sender.clone();
+
+            async move {
+                debug!("Uploading multi-part chunk");
+
+                // TODO: compute SHA-256 hash of chunk and include in upload
+
+                let response = me
+                    .inner
+                    .client
+                    .upload_part()
+                    .bucket(me.inner.name.clone())
+                    .key(&key)
+                    .upload_id(upload_id)
+                    .part_number(part_number as i32)
+                    .body(aws_sdk_s3::types::ByteStream::from(chunk.data))
+                    .send()
+                    .await
+                    .with_context(|_| crate::error::UploadPartSnafu {
+                        bucket: me.inner.name.clone(),
+                        key: key.clone(),
+                        part_number,
+                    })?;
+
+                let e_tag = response
+                    .e_tag()
+                    .expect("BUG: uploaded part missing etag")
+                    .to_string();
+
+                debug!(%e_tag, "Uploaded multi-part chunk");
+
+                let _ = progress_sender.send(chunk_size as u64);
+
+                // Once all of the uploads are done we must provide the information about each part
+                // to the CompleteMultipartUpload call, so retain the key bits here
+                let completed_part = aws_sdk_s3::model::CompletedPart::builder()
+                    .e_tag(e_tag)
+                    .part_number(part_number as i32)
+                    .build();
+
+                Ok((chunk_size, completed_part))
+            }
+            .instrument(span)
+        });
+
+        debug!("Commencing multi-part upload");
+
+        // Use the magic of `buffer_unordered` to poll these chunk uploading futures up to a
+        // maximum concurrency level to honor the configured max parallel requests
+        let mut uploaded_chunk_sizes =
+            chunk_futs.buffer_unordered(self.inner.objstore.inner.config.max_concurrent_requests);
+
+        let mut total_bytes = 0u64;
+        let mut total_parts = 0usize;
+        let mut completed_parts = Vec::new();
+
+        while let Some(result) = uploaded_chunk_sizes.next().await {
+            let (chunk_size, completed_part) = result?;
+
+            total_bytes += chunk_size as u64;
+            total_parts += 1;
+
+            completed_parts.push(completed_part);
+        }
+
+        debug!(
+            total_parts,
+            total_bytes, "All parts uploaded; completing multi-part upload"
+        );
+
+        // AWS is so lazy that they not only require we specify all of the parts we uploaded (even
+        // though they are all tied together with a unique upload ID), we also have to sort them in
+        // order of part number.  AWS could trivially do that on their side, even in what I imagine
+        // is their incredibly gnarly Java codebase, but they dont'.
+        completed_parts.sort_unstable_by_key(|part| part.part_number());
+
+        self.inner
+            .client
+            .complete_multipart_upload()
+            .bucket(self.inner.name.clone())
+            .key(key.clone())
+            .upload_id(upload_id.clone())
+            .multipart_upload(
+                aws_sdk_s3::model::CompletedMultipartUpload::builder()
+                    .set_parts(Some(completed_parts))
+                    .build(),
+            )
+            .send()
+            .await
+            .with_context(|_| crate::error::CompleteMultipartUploadSnafu {
+                bucket: self.inner.name.clone(),
+                key: key.clone(),
+            })?;
+
+        Ok(total_bytes)
+    }
+
+    /// Upload the object identified by `key` using the S3 upload API that takes a single binary
+    /// payload for the entire object.
+    ///
+    /// The chunk to upload is obtained from a writer task and exposed via `chunks_receiver`.
+    ///
+    /// The `progress_sender` should be sent an update whenever a chunk is successfully uploaded.
+    /// The update is just the number of bytes uploaded for that chunk.  Note that some callers
+    /// don't care about updates and will drop the corresponding progress receiver, so a failure to
+    /// send on this channel should be ignored.
+    #[instrument(skip(self, chunks_receiver, progress_sender), fields(bucket = %self.inner.name))]
+    async fn unipart_object_writer(
+        &self,
+        key: String,
+        mut chunks_receiver: oneshot::Receiver<bytes::Bytes>,
+        progress_sender: mpsc::UnboundedSender<u64>,
+    ) -> Result<u64> {
+        // It seems a bit clumsy to do this single chunk upload in an async background task instead
+        // of just doing it directly in this method, but the same code in `create` and `extract`
+        // needs to work with both small objects that aren't big enough to qualify for multi-part,
+        // and larger objects that do need it.  So we get to do this trival upload in a round-about
+        // way
+        let bytes = chunks_receiver.await.map_err(|_| {
+            crate::error::UnipartUploadAbandonedSnafu {
+                bucket: self.inner.name.clone(),
+                key: key.clone(),
+            }
+            .build()
+        })?;
+        let total_bytes = bytes.len() as u64;
+
+        debug!(total_bytes, "Uploading unipart object");
+
+        self.inner
+            .client
+            .put_object()
+            .bucket(self.inner.name.clone())
+            .key(key.clone())
+            .body(aws_sdk_s3::types::ByteStream::from(bytes))
+            .send()
+            .await
+            .with_context(|_| crate::error::PutObjectSnafu {
+                bucket: self.inner.name.clone(),
+                key: key.clone(),
+            })?;
+
+        Ok(total_bytes)
     }
 
     /// Perform a HEAD on the bucket to check access.
@@ -558,12 +734,146 @@ impl Bucket for S3Bucket {
         Ok(bytes.into_bytes())
     }
 
+    #[instrument(skip(self))]
     async fn create_object_writer(
         &self,
         key: String,
         size_hint: Option<u64>,
-    ) -> Result<DuplexStream> {
-        todo!()
+    ) -> Result<(
+        DuplexStream,
+        mpsc::UnboundedReceiver<u64>,
+        oneshot::Receiver<Result<u64>>,
+    )> {
+        // S3 requires that multi-part be initialized in advance, then each individual part can be
+        // uploaded in whatever order is convenient
+        //
+        // One constraint is that the total number of parts must be no more than 10,000.  That's
+        // why we need a size hint; if using the configured chunk size would produce close to or
+        // more than 10K parts, then we need to use a larger chunk size.
+        let key = Self::url_path_to_s3_path(&key).to_string();
+        let config = &self.inner.objstore.inner.config;
+        let multipart_chunk_size = config.multipart_chunk_size.get_bytes() as usize;
+
+        let chunk_size = match size_hint {
+            None => {
+                // Hope that the final size of the object will be small enough that the configured
+                // chunk size is larger than 1/10,000th of the size of the whole object, but assume
+                // it will be large enough that we should use multipart
+                Some(multipart_chunk_size)
+            }
+            Some(size_hint) => {
+                if size_hint > config.multipart_threshold.get_bytes() as u64 {
+                    // Object will be large enough to justify using multipart
+                    // Assuming the size hint is the upper bound of what's possible, how many parts
+                    // will the configured chunk size produce?
+                    if (size_hint + multipart_chunk_size as u64 - 1) / multipart_chunk_size as u64
+                        <= 10_000
+                    {
+                        // Object is small enough the requested chunk size can be used
+                        Some(multipart_chunk_size)
+                    } else {
+                        // Wow this is a very large object.  We're going to have to override the
+                        // chunk size to keep the object count under 10K
+                        let new_chunk_size = size_hint / 10_000;
+                        warn!(%key, size_hint, multipart_chunk_size, new_chunk_size,
+                            "New object size is so large that the requested chunk size will be overridden to keep the total chunk count under 10K");
+
+                        Some(new_chunk_size as usize)
+                    }
+                } else {
+                    // This object's expected size is so small there's no reason to do multipart at
+                    // all
+                    None
+                }
+            }
+        };
+
+        // Create the writer and execute the worker task to process the data written to the stream.
+        //
+        // There are two variations, one multi-part the other uni-part
+        let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
+        let (result_sender, result_receiver) = oneshot::channel();
+
+        match chunk_size {
+            Some(chunk_size) => {
+                let response = self
+                    .inner
+                    .client
+                    .create_multipart_upload()
+                    .bucket(&self.inner.name)
+                    .key(key.clone())
+                    .send()
+                    .await
+                    .with_context(|_| crate::error::CreateMultipartUploadSnafu {
+                        bucket: self.inner.name.clone(),
+                        key: key.to_string(),
+                    })?;
+                let upload_id = response
+                    .upload_id()
+                    .expect("BUG: multi-part uploads always have upload ID")
+                    .to_string();
+
+                let (bytes_writer, chunks_receiver) =
+                    crate::writers::multipart(chunk_size, config.max_concurrent_requests);
+
+                let me = self.clone();
+                let key = key.to_string();
+
+                // Start a background task that will receive multi-part chunks on `chunks_receiver`
+                // and write them in parallel to S3
+                tokio::spawn(async move {
+                    let result = me
+                        .multipart_object_writer(
+                            key.clone(),
+                            upload_id.clone(),
+                            chunks_receiver,
+                            progress_sender,
+                        )
+                        .await;
+
+                    if let Err(e) = &result {
+                        // Before reporting this error, clean up the remains of the multi-part
+                        // upload
+                        error!(?e, bucket = %me.inner.name, %key, %upload_id,
+                            "Multi-part upload failed; aborting multi-part upload on server side");
+
+                        if let Err(e) = me
+                            .inner
+                            .client
+                            .abort_multipart_upload()
+                            .bucket(me.inner.name.clone())
+                            .key(key.clone())
+                            .upload_id(upload_id.clone())
+                            .send()
+                            .await
+                        {
+                            error!(?e, bucket = %me.inner.name, %key, %upload_id,
+                            "Error aborting multi-part upload.  This will remain on the server forever unless there's a lifecycle policy configured");
+                        }
+                    }
+
+                    let _ = result_sender.send(result);
+                });
+
+                Ok((bytes_writer, progress_receiver, result_receiver))
+            }
+            None => {
+                // No need for multi-part here
+                let (bytes_writer, chunks_receiver) =
+                    crate::writers::unipart(config.multipart_threshold.get_bytes() as usize);
+
+                let me = self.clone();
+
+                tokio::spawn(async move {
+                    let _ = result_sender.send(
+                        me.unipart_object_writer(key.to_string(), chunks_receiver, progress_sender)
+                            .await,
+                    );
+                });
+
+                Ok((bytes_writer, progress_receiver, result_receiver))
+            }
+        }
     }
 }
 

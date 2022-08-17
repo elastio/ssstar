@@ -68,13 +68,14 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
 
     /// If clap is enabled, verify that the `Default` impl and the clap-declared defaults match, to
     /// detect if they ever drift out of sync in the future
     #[cfg(feature = "clap")]
     #[test]
     fn defaults_match() {
+        use clap::Parser;
+
         let args: &'static [&'static str] = &[];
         let clap_default = Config::parse_from(args);
 

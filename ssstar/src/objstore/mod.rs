@@ -4,6 +4,7 @@ use once_cell::sync::OnceCell;
 use snafu::prelude::*;
 use std::{any::Any, ops::Range, sync::Arc};
 use tokio::io::{AsyncWrite, DuplexStream};
+use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 mod s3;
@@ -60,7 +61,12 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     /// This performs the read as a single network call, which means it's not suited for reading
     /// large (multiple hundreds of MB or more) data.  For that, multiple `read_object_part` calls
     /// should be made in parallel for different ranges of the same object.
-    async fn read_object_part(&self, key: String, version_id: Option<String>, byte_range: Range<u64>) -> Result<bytes::Bytes>;
+    async fn read_object_part(
+        &self,
+        key: String,
+        version_id: Option<String>,
+        byte_range: Range<u64>,
+    ) -> Result<bytes::Bytes>;
 
     /// Construct an [`DuplexStream`] implementation that will upload all written data to the object
     /// identified as `key`.
@@ -71,11 +77,29 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     /// The internal implementation is optimized for concurrency, and will divide the written data
     /// up into chunks which are uploaded in parallel, subject to the max concurrency in the
     /// config.
+    ///
+    /// The return value is a tuple with the following:
+    ///
+    /// - The [`DuplexStream`] writer, to which the data to upload to the object should be written.
+    ///   In the event there is some error with the upload, writes to this writer will fail with a
+    ///   BrokenPipe error, in which case callers should await the results receiver to get the
+    ///   actual error details.
+    /// - Status receiver, which receives multiple messages reporting the total number of bytes
+    ///   uploaded to object storage so far.  Callers who don't care about progress reporting can
+    ///   drop this.
+    /// - Results reciever, which will receive the result of the async task that processes all of
+    ///   the writes sent to the [`DuplexStream`].  Callers should await this receiver, which will
+    ///   complete only when the data written to the `DuplexStream` have all been uploaded
+    ///   successfully, or some error ocurrs that causes the uploading to be aborted.
     async fn create_object_writer(
         &self,
         key: String,
         size_hint: Option<u64>,
-    ) -> Result<DuplexStream>;
+    ) -> Result<(
+        DuplexStream,
+        mpsc::UnboundedReceiver<u64>,
+        oneshot::Receiver<Result<u64>>,
+    )>;
 }
 
 dyn_clone::clone_trait_object!(Bucket);

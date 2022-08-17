@@ -5,6 +5,7 @@ mod error;
 mod extract;
 mod objstore;
 mod tar;
+mod writers;
 
 pub use config::Config;
 pub use create::*;

@@ -3,7 +3,7 @@
 use crate::objstore::{Bucket, ObjectStorage, ObjectStorageFactory};
 use crate::tar::TarBuilderWrapper;
 use crate::{Config, Result, S3TarError};
-use futures::StreamExt;
+use futures::{StreamExt, TryStream, TryStreamExt};
 use itertools::Itertools;
 use snafu::prelude::*;
 use std::future::Future;
@@ -12,7 +12,8 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWrite;
-use tracing::{debug, instrument};
+use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, instrument, error};
 use url::Url;
 
 /// Represents where we will write the target archive
@@ -446,6 +447,11 @@ pub trait ProgressCallback: Sync + Send {
     ///
     /// This event happens after a `tar_archive_part_written` event and sees the total number of
     /// bytes written, including any tar headers.
+    ///
+    /// ## Notes
+    ///
+    /// This event can be reported from a synchronous context, because it's captured at the level
+    /// of the [`std::io::Write`] implementation itself.
     fn tar_archive_bytes_written(&self, bytes_written: u64) {}
 
     /// The tar archive has been completed, and will see no further writes.
@@ -454,11 +460,21 @@ pub trait ProgressCallback: Sync + Send {
     /// storage from a local buffer.
     fn tar_archive_writes_completed(&self, total_bytes_written: u64) {}
 
+    /// Some bytes have been uploaded to the tar archive in object storage.
+    ///
+    /// `bytes_uploaded` is not a total; it's the amount of bytes uploaded just now by the caller.
+    /// The receiver of this event will need to maintain a running total if one is desired.
+    ///
+    /// If the tar archive is not being directed to object storage, then this event will never fire
+    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: u64) {}
+
     /// The tar archive's previously completed writes have all been flushed from their buffers and
     /// uploaded to object storage (or a file or a stream dependng on where the tar archive is
     /// located).
     ///
     /// This is the final event that can happen.  Once this event fires, the job is done.
+    ///
+    /// If the tar archive is not being directed to object storage, then this event will never fire
     fn tar_archive_upload_completed(&self, size: u64) {}
 }
 
@@ -513,25 +529,51 @@ impl CreateArchiveJob {
         let approx_archive_size = total_bytes + (total_objects as u64 * 512);
 
         // Construct a writer for the target archive.
-        let writer: Box<dyn AsyncWrite + Send + Unpin> = match self.target {
+        //
+        // This is made complex by the fact that we want to use the same code whether the target
+        // archive is itself in object storage, or a file on disk, or an arbitrary stream (like
+        // stdout or stderr).  Of those, object storage is a special case because it's not enough
+        // to just get an `AsyncWrite` instance, we also need a way to monitor the background task
+        // that does the actual uploading to S3, and at the end to block until all queued S3
+        // uploads actually finish.
+        //
+        // So when you find yourself wondering "OMG why all this complexity it's just a writer",
+        // it's because we allow to write the tar archive directly back to object storage.  Is that
+        // a capbility so useful that it's worth the hassle?  I think so.
+        let (writer, result_receiver): (
+            Box<dyn AsyncWrite + Send + Unpin>,
+            Option<oneshot::Receiver<Result<u64>>>,
+        ) = match self.target {
             TargetArchive::ObjectStorage(url) => {
                 // Validate the URL and get a Bucket object in the bargain
                 let objstore = self.objstore_factory.from_url(&url).await?;
                 let bucket = objstore.extract_bucket_from_url(&url).await?;
 
                 // Create a writer that will upload all written data to this object
-                Box::new(
-                    bucket
-                        .create_object_writer(url.path().to_string(), Some(approx_archive_size))
-                        .await?,
-                )
+                let (bytes_writer, mut progress_receiver, result_receiver) = bucket
+                    .create_object_writer(url.path().to_string(), Some(approx_archive_size))
+                    .await?;
+
+                // Make a background task that will pull updates from the process stream and post
+                // them to the progress callback
+                let progress = progress.clone();
+
+                tokio::spawn(async move {
+                    while let Some(bytes_uploaded) = progress_receiver.recv().await {
+                        progress.tar_archive_bytes_uploaded(bytes_uploaded);
+                    }
+                });
+
+                (Box::new(bytes_writer), Some(result_receiver))
             }
-            TargetArchive::File(path) => Box::new(
-                tokio::fs::File::create(&path)
+            TargetArchive::File(path) => {
+                let bytes_writer = tokio::fs::File::create(&path)
                     .await
-                    .with_context(|_| crate::error::WritingArchiveFileSnafu { path })?,
-            ),
-            TargetArchive::Writer(writer) => writer,
+                    .with_context(|_| crate::error::WritingArchiveFileSnafu { path })?;
+
+                (Box::new(bytes_writer), None)
+            }
+            TargetArchive::Writer(writer) => (writer, None),
         };
 
         // Create the tar archive itself
@@ -600,11 +642,15 @@ impl CreateArchiveJob {
             let progress = progress.clone();
 
             tokio::spawn(async move {
+                let mut total_bytes_downloaded = 0u64;
+
                 while let Some(result) = parts_stream.next().await {
                     // Part downloads are yield from the stream in the order in which they appeared,
                     // which means all parts for an object proceed from 0 to the last one, in order.
                     // If the download of an entire object has completed, report it here
                     if let Ok((part, _data)) = &result {
+                        total_bytes_downloaded += part.byte_range.end - part.byte_range.start;
+
                         if part.part_number == 0 {
                             // This is the start of an input object download
                             progress.input_object_download_started(
@@ -640,6 +686,10 @@ impl CreateArchiveJob {
                         debug!("parts channel is closed; aborting feeder task");
                         break;
                     }
+                }
+
+                if !parts_sender.is_closed() {
+                    progress.input_objects_download_completed(total_bytes_downloaded)
                 }
             });
         }
@@ -780,8 +830,43 @@ impl CreateArchiveJob {
 
         progress.tar_archive_writes_completed(bytes_written);
 
-        // Next steps: the writer is probably still busily uploading data.  Need a way to get
-        // visibility into that and block until the upload is done.
-        todo!()
+        // If the target archive was also an object on object storage, then there's still a
+        // background async task that is taking the bytes written by the tar Builder, buffering
+        // them into chunks equal to the multipart chunk size, and uploading them in parallel.
+        // Obviously we're not actually done until this has completed successfully.
+        if let Some(result_receiver) = result_receiver {
+            match result_receiver.await {
+                Ok(Ok(bytes_written)) => {
+                    debug!(
+                        bytes_written,
+                        "Upload of tar archive to object storage completed"
+                    );
+                    progress.tar_archive_upload_completed(bytes_written);
+
+                    Ok(())
+                }
+                Ok(Err(error)) => {
+                    // The async task that uploads multipart chunks to object storage failed with
+                    // some kind of error.
+                    // TODO: if that task actually failed, we usually won't see it here, because the
+                    // `Write` impl passed to `tar::Builder` will have failed a write operation, so
+                    // the `spawn_append_data` future will have failed, probably with some generic
+                    // IO error like BrokenPipe.  We should handle that failure and, before
+                    // returning whatever error that future fails with, attempt to pull a result
+                    // from this receiver since that will be the actual reason for the failure.
+                    error!(?error, "The async upload task which uploads the tar archive to object storage reported an error");
+                    Err(error)
+                }
+                Err(_) => {
+                    // The sender that matches this receiver was dropped.  That can only be due to
+                    // a panic in the worker task
+                    crate::error::AsyncTarWriterPanicSnafu {}.fail()
+                }
+            }
+        } else {
+            // Playing on easy mode, the tar archive is written locally so the `flush()` done in
+            // `finish_and_close` is all we need
+            Ok(())
+        }
     }
 }

@@ -56,6 +56,44 @@ pub enum S3TarError {
         source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::GetObjectError>,
     },
 
+    #[snafu(display(
+        "Error starting multi-part upload of object '{key}' in S3 bucket '{bucket}'"
+    ))]
+    CreateMultipartUpload {
+        bucket: String,
+        key: String,
+        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::CreateMultipartUploadError>,
+    },
+
+    #[snafu(display(
+        "Error uploading part number {part_number} of object '{key}' in S3 bucket '{bucket}'"
+    ))]
+    UploadPart {
+        bucket: String,
+        key: String,
+        part_number: usize,
+        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::UploadPartError>,
+    },
+
+    #[snafu(display(
+        "Error completing multi-part upload of object '{key}' in S3 bucket '{bucket}'"
+    ))]
+    CompleteMultipartUpload {
+        bucket: String,
+        key: String,
+        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::CompleteMultipartUploadError>,
+    },
+
+    #[snafu(display("Error uploading object '{key}' in S3 bucket '{bucket}'"))]
+    PutObject {
+        bucket: String,
+        key: String,
+        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::PutObjectError>,
+    },
+
+    #[snafu(display("Caller abandoned upload of object '{key}' in S3 bucket '{bucket}' before any data was uploaded"))]
+    UnipartUploadAbandoned { bucket: String, key: String },
+
     #[snafu(display("Error reading byte stream for object '{key}' in S3 bucket '{bucket}'"))]
     ReadByteStream {
         bucket: String,
@@ -74,6 +112,9 @@ pub enum S3TarError {
         path: PathBuf,
         source: std::io::Error,
     },
+
+    #[snafu(display("BUG: it looks like the background task writing the tar archive to object storage has panicked.  Check log output for more details"))]
+    AsyncTarWriterPanic,
 
     #[snafu(display("Error appending entry to tar archive"))]
     TarAppendData { source: std::io::Error },
