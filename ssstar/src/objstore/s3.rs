@@ -1,6 +1,7 @@
 use super::{Bucket, ObjectStorage};
 use crate::{create, Config, Result};
 use aws_config::meta::region::RegionProviderChain;
+use aws_sdk_s3::Credentials;
 use aws_smithy_http::endpoint::Endpoint;
 use aws_types::region::Region;
 use futures::{Stream, StreamExt};
@@ -10,6 +11,8 @@ use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, instrument, warn, Instrument};
 use url::Url;
+
+const APP_NAME: &str = concat!(env!("CARGO_PKG_NAME"), "-", env!("VERGEN_BUILD_SEMVER"),);
 
 /// Implementation of [`ObjectStorage`] for S3 and S3-compatible APIs
 #[derive(Clone)]
@@ -416,6 +419,60 @@ impl S3Bucket {
         Ok(total_bytes)
     }
 
+    /// Given a potentially huge range of bytes, break it up into small pieces according to the
+    /// multipart config
+    fn split_range_into_multipart(&self, range: Range<u64>) -> impl Iterator<Item = Range<u64>> {
+        let config = &self.inner.objstore.inner.config;
+        let threshold = config.multipart_threshold.get_bytes() as u64;
+        let chunk_size = config.multipart_chunk_size.get_bytes() as u64;
+
+        struct PartIterator {
+            threshold: u64,
+            chunk_size: u64,
+            range: Range<u64>,
+            next_offset: u64,
+        }
+
+        impl Iterator for PartIterator {
+            type Item = Range<u64>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.next_offset < self.range.end {
+                    if self.range.end - self.range.start < self.threshold {
+                        // This range isn't big enough to justify splitting into multiple parts.
+                        // Return a single part and nothing more
+                        self.next_offset = self.range.end;
+                        Some(self.range.clone())
+                    } else {
+                        let chunk_len = self.chunk_size.min(self.range.end - self.next_offset);
+                        let next_range = self.next_offset..self.next_offset + chunk_len;
+                        self.next_offset += chunk_len;
+
+                        Some(next_range)
+                    }
+                } else {
+                    None
+                }
+            }
+
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                // Approximate the expected size based on the range and the thunk size
+                let remaining = self.range.end - self.next_offset;
+                let chunks = (remaining + self.chunk_size - 1) / self.chunk_size;
+
+                (chunks as usize, Some(chunks as usize))
+            }
+        }
+
+        PartIterator {
+            threshold,
+            chunk_size,
+            range,
+            next_offset: 0,
+        }
+        .fuse()
+    }
+
     /// Perform a HEAD on the bucket to check access.
     ///
     /// If the HEAD check passes, it means the client's configured region is correct, the
@@ -728,6 +785,61 @@ impl Bucket for S3Bucket {
     }
 
     #[instrument(skip(self))]
+    async fn read_object(
+        &self,
+        key: String,
+        version_id: Option<String>,
+        byte_range: Range<u64>,
+    ) -> Result<mpsc::Receiver<Result<bytes::Bytes>>> {
+        debug!("Reading object");
+
+        let key = Self::url_path_to_s3_path(&key).to_string();
+
+        // Split up this range of bytes (which might cover the entire object), so that the
+        // multipart config is honored and we can download the object's data in parallel
+        let parts = self.split_range_into_multipart(byte_range);
+
+        // Make a separate future to download each of these ranges
+        let read_futs = {
+            let key = key.clone();
+            let me = self.clone();
+
+            parts.map(move |range| {
+                let key = key.clone();
+                let version_id = version_id.clone();
+                let me = me.clone();
+
+                async move { me.read_object_part(key, version_id, range).await }
+            })
+        };
+
+        // Make the iterator of futures into a stream which yields the result of each future in
+        // the order they appear in the iterator, polling multiple futures in parallel each time the stream
+        // is read
+        let mut read_stream = futures::stream::iter(read_futs)
+            .buffered(self.inner.objstore.inner.config.max_concurrent_requests);
+
+        // Run a background async task that will continuously poll this stream (and thus run up to
+        // `max_concurrent_requests` futures at a time), posting the results to a mpsc queue the
+        // receiver of which will be returned to the caller
+        let (sender, receiver) =
+            mpsc::channel(self.inner.objstore.inner.config.max_concurrent_requests);
+
+        tokio::spawn(async move {
+            while let Some(result) = read_stream.next().await {
+                if (sender.send(result).await).is_err() {
+                    // The receiver is dropped, which means no one is listening anymore so stop
+                    // working on the downloads
+                    break;
+                }
+            }
+            debug!(%key, "Read object async task exiting");
+        });
+
+        Ok(receiver)
+    }
+
+    #[instrument(skip(self))]
     async fn create_object_writer(
         &self,
         key: String,
@@ -755,6 +867,16 @@ impl Bucket for S3Bucket {
                 Some(multipart_chunk_size)
             }
             Some(size_hint) => {
+                if size_hint > 5 * (1024 * 1024 * 1024 * 1024u64) {
+                    // This is larger than the maximum allowed object size on S3
+                    return crate::error::ObjectTooLargeSnafu {
+                        bucket: self.inner.name.clone(),
+                        key: key.to_string(),
+                        size: size_hint,
+                    }
+                    .fail();
+                }
+
                 if size_hint > config.multipart_threshold.get_bytes() as u64 {
                     // Object will be large enough to justify using multipart
                     // Assuming the size hint is the upper bound of what's possible, how many parts
@@ -767,7 +889,8 @@ impl Bucket for S3Bucket {
                     } else {
                         // Wow this is a very large object.  We're going to have to override the
                         // chunk size to keep the object count under 10K
-                        let new_chunk_size = size_hint / 10_000;
+                        let new_chunk_size = (size_hint + 9_999) / 10_000;
+
                         warn!(%key, size_hint, multipart_chunk_size, new_chunk_size,
                             "New object size is so large that the requested chunk size will be overridden to keep the total chunk count under 10K");
 
@@ -888,13 +1011,30 @@ async fn make_s3_client(config: &Config, region: impl Into<Option<String>>) -> a
 
     let region_provider = if let Some(region) = region {
         RegionProviderChain::first_try(Region::new(region))
+    } else if let Some(region) = config.aws_region.as_deref() {
+        RegionProviderChain::first_try(Region::new(region.to_string()))
     } else {
         // No explicit region; use the environment
         RegionProviderChain::default_provider().or_else("us-east-1")
     };
-    let aws_config = aws_config::from_env().region(region_provider).load().await;
 
-    let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config);
+    let mut aws_config_builder = aws_config::from_env().region(region_provider);
+
+    if let (Some(aws_access_key_id), Some(aws_secret_access_key)) = (
+        config.aws_access_key_id.as_deref(),
+        config.aws_secret_access_key.as_deref(),
+    ) {
+        aws_config_builder = aws_config_builder.credentials_provider(Credentials::from_keys(
+            aws_access_key_id,
+            aws_secret_access_key,
+            None,
+        ));
+    }
+
+    let aws_config = aws_config_builder.load().await;
+
+    let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config)
+        .app_name(aws_config::AppName::new(APP_NAME).expect("BUG: hard-coded app name is invalid"));
     if let Some(s3_endpoint) = &config.s3_endpoint {
         // AWS SDK uses the `Uri` type in `http`.  There doesn't seem to be an easy way to
         // convert between the two...
@@ -912,4 +1052,13 @@ async fn make_s3_client(config: &Config, region: impl Into<Option<String>>) -> a
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_name_is_valid() {
+        // Make sure the compile time-generated app name is actually valid
+        aws_config::AppName::new(APP_NAME)
+            .unwrap_or_else(|_| panic!("App Name '{}' is invalid", APP_NAME));
+    }
+}

@@ -330,7 +330,7 @@ impl CreateArchiveJobBuilder {
 /// A trait which callers can implement to get detailed progress updates as archive creation is
 /// progressing.
 #[allow(unused_variables)]
-pub trait ProgressCallback: Sync + Send {
+pub trait CreateProgressCallback: Sync + Send {
     /// The download of a new input object is starting.
     ///
     /// In truth downloads happen in parallel, but they are yielded in precisely the order they
@@ -503,7 +503,7 @@ impl CreateArchiveJob {
         // A dummy impl of ProgressCallback that doesn't do anything with any of the progress
         // updates
         struct NoProgress {}
-        impl ProgressCallback for NoProgress {}
+        impl CreateProgressCallback for NoProgress {}
 
         self.run(abort, NoProgress {}).await
     }
@@ -516,11 +516,16 @@ impl CreateArchiveJob {
     pub async fn run<Abort, Progress>(self, _abort: Abort, progress: Progress) -> Result<()>
     where
         Abort: Future<Output = ()>,
-        Progress: ProgressCallback + 'static,
+        Progress: CreateProgressCallback + 'static,
     {
-        let progress: Arc<dyn ProgressCallback> = Arc::new(progress);
+        let progress: Arc<dyn CreateProgressCallback> = Arc::new(progress);
         let total_bytes = self.total_bytes();
         let total_objects = self.total_objects();
+
+        // There must be at least one object otherwise it doesn't make sense to proceed
+        if total_objects == 0 {
+            return crate::error::NoInputsSnafu {}.fail();
+        }
 
         // Estimate the size of the tar archive we're going to create.  It will be the
         // combined size of all objects in the archive, plus approx 512 bytes of overhead
@@ -577,9 +582,6 @@ impl CreateArchiveJob {
 
         // Create the tar archive itself
         let blocking_writer = crate::async_bridge::async_write_as_writer(writer);
-        // This mutex isn't actually needed but we operate on this tar builder in a spawned
-        // blocking task and the Rust compiler can't tell that we never access this builder from
-        // multiple threads at the same time.
         let tar_builder = TarBuilderWrapper::new(blocking_writer, progress.clone());
 
         progress.tar_archive_initialized(total_objects, total_bytes, approx_archive_size);
@@ -782,11 +784,12 @@ impl CreateArchiveJob {
                                 break;
                             } else {
                                 progress.tar_archive_part_written(
-                                    part.input_object.bucket.name(),
-                                    &part.input_object.key,
-                                    part.input_object.version_id.as_deref(),
-                                    part.part_number,
-                                    (part.byte_range.end - part.byte_range.start) as usize,
+                                    next_part.input_object.bucket.name(),
+                                    &next_part.input_object.key,
+                                    next_part.input_object.version_id.as_deref(),
+                                    next_part.part_number,
+                                    (next_part.byte_range.end - next_part.byte_range.start)
+                                        as usize,
                                 );
                             }
 

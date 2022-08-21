@@ -1,9 +1,8 @@
 use crate::{create, Config, Result};
 use dyn_clone::DynClone;
 use once_cell::sync::OnceCell;
-
 use std::{any::Any, ops::Range, sync::Arc};
-use tokio::io::{DuplexStream};
+use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
@@ -67,6 +66,22 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
         version_id: Option<String>,
         byte_range: Range<u64>,
     ) -> Result<bytes::Bytes>;
+
+    /// Read some or all of an object in one operation.
+    ///
+    /// Unlike [`Self::read_object_part`], thsi can be used for reading large objects, even up to
+    /// the max allowed 5TB size.  Internally, the single read request will be split into multiple
+    /// smaller parts, read in parallel (up to the configured maximum concurrency).
+    ///
+    /// This is the easier method to use, but it doesn't provide any control over the individual
+    /// read operations made against the object.  If that is required (as it is when reading many
+    /// objects at a time), use [`Self::read_object_part`].
+    async fn read_object(
+        &self,
+        key: String,
+        version_id: Option<String>,
+        byte_range: Range<u64>,
+    ) -> Result<mpsc::Receiver<Result<bytes::Bytes>>>;
 
     /// Construct an [`DuplexStream`] implementation that will upload all written data to the object
     /// identified as `key`.

@@ -1,11 +1,28 @@
 use clap::{ArgGroup, Parser, Subcommand};
 use ssstar::{CreateArchiveJobBuilder, TargetArchive};
-use std::{path::PathBuf};
+use std::path::PathBuf;
 use tracing::debug;
 use url::Url;
 
+const VERSION_DETAILS: &str = concat!(
+    env!("VERGEN_BUILD_SEMVER"),
+    " (",
+    "branch ",
+    env!("VERGEN_GIT_BRANCH"),
+    ", ",
+    "commit ",
+    env!("VERGEN_GIT_SHA_SHORT"),
+    ", ",
+    "commit date ",
+    env!("VERGEN_GIT_COMMIT_DATE"),
+    ", ",
+    "target ",
+    env!("VERGEN_CARGO_TARGET_TRIPLE"),
+    ")"
+);
+
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
+#[clap(author, version = VERSION_DETAILS, about, long_about = None)]
 struct Args {
     /// Operation to perform
     #[clap(subcommand)]
@@ -157,7 +174,6 @@ impl Command {
                         .get_appropriate_unit(true),
                     job.total_objects()
                 );
-                println!("TODO: implement job");
                 job.run_without_progress(futures::future::pending()).await?;
 
                 Ok(())

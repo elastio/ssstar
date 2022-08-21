@@ -74,7 +74,7 @@ impl<W: std::io::Write + Send + 'static> Drop for TarBuilderWrapper<W> {
 
 impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
     /// Wrap a [`tar::Builder`] so it can be safely used in an async context
-    pub fn new(writer: W, progress: Arc<dyn create::ProgressCallback>) -> Self {
+    pub fn new(writer: W, progress: Arc<dyn create::CreateProgressCallback>) -> Self {
         // Wrap this writer in our own writer which counts bytes written and reports progress
         let writer = CountingWriter::new(writer, progress);
 
@@ -186,12 +186,12 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
 /// underlying writer and reports them to the [`create::ProgressCallback`] callback method
 pub(crate) struct CountingWriter<W: std::io::Write + Send + 'static> {
     inner: W,
-    progress: Arc<dyn create::ProgressCallback>,
+    progress: Arc<dyn create::CreateProgressCallback>,
     total_bytes_written: u64,
 }
 
 impl<W: std::io::Write + Send + 'static> CountingWriter<W> {
-    fn new(writer: W, progress: Arc<dyn create::ProgressCallback>) -> Self {
+    fn new(writer: W, progress: Arc<dyn create::CreateProgressCallback>) -> Self {
         Self {
             inner: writer,
             progress,

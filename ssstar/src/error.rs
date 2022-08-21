@@ -13,6 +13,9 @@ pub enum S3TarError {
     #[snafu(display("The S3 URL '{url}' is missing the bucket name"))]
     MissingBucket { url: Url },
 
+    #[snafu(display("No matching S3 objects were found"))]
+    NoInputs,
+
     #[snafu(display(
         "The S3 bucket '{bucket}' either doesn't exist, or your IAM identity is not granted access"
     ))]
@@ -99,6 +102,13 @@ pub enum S3TarError {
         bucket: String,
         key: String,
         source: aws_smithy_http::byte_stream::Error,
+    },
+
+    #[snafu(display("Unable to create new object '{key}' in S3 bucket '{bucket}', because the expected size of {size} bytes is larger than the 5TB maximum object size"))]
+    ObjectTooLarge {
+        bucket: String,
+        key: String,
+        size: u64
     },
 
     #[snafu(display("The glob pattern '{pattern}' is invalid"))]

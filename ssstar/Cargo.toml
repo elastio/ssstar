@@ -25,10 +25,10 @@ clap = ["dep:clap"]
 [dependencies]
 async-trait = "0.1.57"
 aws-config = "0.47.0"
-aws-sdk-s3 = "0.17.0"
+aws-sdk-s3 = { version = "0.17.0", features = ["rt-tokio"] }
 aws-smithy-http = "0.47.0"
 aws-smithy-types-convert = { version = "0.47.0", features = ["convert-chrono"] }
-aws-types = "0.47.0"
+aws-types = { version = "0.47.0", features = ["hardcoded-credentials"] }
 byte-unit = { version = "4" }
 bytes = "1.2.1"
 chrono = "0.4.22"
@@ -48,4 +48,13 @@ tracing = "0.1.36"
 url = "2.2.2"
 
 [dev-dependencies]
+ssstar-testing = { version = "0.1.0", path = "../ssstar-testing" }
+color-eyre = "0.6.2"
 rand = "0.8.5"
+strum = { version = "0.24.1", features = ["derive"] }
+assert_matches = "1.5.0"
+more-asserts = "0.3.0"
+tempdir = "0.3.7"
+
+[build-dependencies]
+vergen = "7.4.0"

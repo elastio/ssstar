@@ -1,2 +1,2 @@
 [workspace]
-members = ["ssstar", "ssstar-cli"]
+members = ["ssstar", "ssstar-cli", "ssstar-testing"]
