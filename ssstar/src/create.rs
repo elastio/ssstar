@@ -6,6 +6,7 @@ use crate::{Config, Result};
 use futures::StreamExt;
 use itertools::Itertools;
 use snafu::prelude::*;
+use std::fmt::Display;
 use std::future::Future;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -53,6 +54,39 @@ pub(crate) struct CreateArchiveInput {
 
     /// The selector that describes which objects in the bucket to include in the archive
     selector: ObjectSelector,
+}
+
+impl Display for CreateArchiveInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Make this into a human-readable string for use in error messages
+        match &self.selector {
+            ObjectSelector::Bucket => {
+                write!(f, "Bucket {}", self.bucket.name())
+            }
+            ObjectSelector::Object {
+                key,
+                version_id: None,
+            } => write!(f, "Object '{key}' in bucket '{}'", self.bucket.name()),
+            ObjectSelector::Object {
+                key,
+                version_id: Some(version_id),
+            } => write!(
+                f,
+                "Object '{key}' (version '{version_id}') in bucket '{}'",
+                self.bucket.name()
+            ),
+            ObjectSelector::Prefix { prefix } => write!(
+                f,
+                "Objects with prefix '{prefix}' in bucket '{}'",
+                self.bucket.name()
+            ),
+            ObjectSelector::Glob { pattern } => write!(
+                f,
+                "Objects matching glob '{pattern}' in bucket '{}'",
+                self.bucket.name()
+            ),
+        }
+    }
 }
 
 impl CreateArchiveInput {
@@ -109,19 +143,28 @@ impl CreateArchiveInput {
     /// corresond to this input.
     ///
     /// This could be a long-running operation if a bucket or prefix is specified which contains
-    /// hundreds of thousands or millions of objects.  Note that when using a glob, all objects in
-    /// the bucket are enumerated even if the glob pattern itself has a constant prefix.
-    #[instrument(err)]
+    /// hundreds of thousands or millions of objects.
+    ///
+    /// If this object selector doesn't match any objects, an error is raised, since it likely
+    /// indicates a mistake on the user's part.
+    #[instrument(err, skip(self))]
     async fn into_input_objects(self) -> Result<Vec<InputObject>> {
         // Enumerating objects is an object storage implementation-specific operation
-        debug!("Listing all object store objects that match this archive input");
+        let input_text = self.to_string();
+
+        debug!(self = %input_text, "Listing all object store objects that match this archive input");
         let input_objects = self.bucket.list_matching_objects(self.selector).await?;
         debug!(
+            self = %input_text,
             count = input_objects.len(),
             "Listing matching objects completed"
         );
 
-        Ok(input_objects)
+        if input_objects.is_empty() {
+            crate::error::SelectorMatchesNoObjectsSnafu { input: input_text }.fail()
+        } else {
+            Ok(input_objects)
+        }
     }
 }
 

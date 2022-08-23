@@ -148,7 +148,7 @@ impl ObjectStorageFactory {
     ///
     /// If the URL isn't recognized as being supported by ssstar, an error is returned
     #[allow(clippy::wrong_self_convention)] // For a factory object I think it's obvious what this means
-    pub async fn from_url(&self, url: &Url) -> Result<Arc<dyn ObjectStorage>> {
+    pub async fn from_url(&self, url: &Url) -> Result<Box<dyn ObjectStorage>> {
         if url.scheme() == "s3" {
             Ok(self.s3().await)
         } else {
@@ -157,26 +157,16 @@ impl ObjectStorageFactory {
     }
 
     /// Return a [`ObjectStorage`] implementation for S3 or an S3-compatible API
-    pub async fn s3(&self) -> Arc<dyn ObjectStorage> {
-        static INSTANCE: OnceCell<Arc<dyn ObjectStorage>> = OnceCell::new();
-
-        // The process of initializing the AWS SDK for Rust is itself async, so we can't just use
-        // `get_or_init` here.  However, it's not a big deal due to two threads calling this
-        // function at the same time we create two SDK clients.  It's a bit of wasted effort as one
-        // of them will be immediately dropped, but it's not a huge problem.
-        if let Some(instance) = INSTANCE.get() {
-            instance.clone()
-        } else {
-            // Hasn't been initialized yet, so create a new S3 client
-            match INSTANCE.try_insert(Arc::new(s3::S3::new(self.config.clone()).await)) {
-                // No other initialization happened in another thread; use the instance we just
-                // created
-                Ok(instance) => instance.clone(),
-
-                // Some other thread got there first; we should use the instance the other thread
-                // created, and drop the one we created
-                Err((existing_instance, _new_instance)) => existing_instance.clone(),
-            }
-        }
+    pub async fn s3(&self) -> Box<dyn ObjectStorage> {
+        // NOTE: Earlier versions of this code used a `OnceCell` object to lazily create just one
+        // `S3` instance for the entire process.  This unfortunately won't work when in cases where
+        // multiple tokio runtimes are in use, such as for example in Rust tests.  Each `Client`
+        // object in the AWS SDK holds on to some `hyper` resources which are tied to the runtime,
+        // and if the runtime is dropped and these resources are subsequently used, then a panic
+        // can happen.  So, every call to `s3` will make a new `ObjectStorage` instance.  Sad.
+        //
+        // The bug in question is https://github.com/hyperium/hyper/issues/2892, and it seems not
+        // likely to be fixed any time soon.
+        Box::new(s3::S3::new(self.config.clone()).await)
     }
 }

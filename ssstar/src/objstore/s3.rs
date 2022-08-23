@@ -549,6 +549,7 @@ impl Bucket for S3Bucket {
     ) -> Result<Vec<create::InputObject>> {
         // Helpfully, the AWS Rust SDK provides conversions from their own internal DateTime type
         // to Chrono.
+        use aws_sdk_s3::types::SdkError;
         use aws_smithy_types_convert::date_time::DateTimeExt;
 
         match selector {
@@ -558,7 +559,7 @@ impl Bucket for S3Bucket {
 
                 debug!(key, bucket = %self.inner.name, "Archive input matches a single S3 object");
 
-                let metadata = self
+                let result = self
                     .inner
                     .client
                     .head_object()
@@ -566,11 +567,36 @@ impl Bucket for S3Bucket {
                     .key(key)
                     .set_version_id(version_id)
                     .send()
-                    .await
-                    .with_context(|_| crate::error::HeadObjectSnafu {
-                        bucket: self.inner.name.clone(),
-                        key: key.to_string(),
-                    })?;
+                    .await;
+
+                let metadata = match result {
+                    Err(err) => {
+                        // If the error here is that the object is not found, throw that specific
+                        // error as it provides more meaningful context then the generic
+                        // `HeadObjectSnafu` error
+                        if let SdkError::ServiceError {
+                            err: service_err, ..
+                        } = &err
+                        {
+                            if service_err.is_not_found() {
+                                return Err(crate::error::ObjectNotFoundSnafu {
+                                    bucket: self.inner.name.clone(),
+                                    key: key.to_string(),
+                                }
+                                .into_error(snafu::NoneError));
+                            }
+                        }
+
+                        // A non-service error, or a service error that isn't not found, should be
+                        // reported as a generic HeadObject error
+                        return Err(crate::error::HeadObjectSnafu {
+                            bucket: self.inner.name.clone(),
+                            key: key.to_string(),
+                        }
+                        .into_error(err));
+                    }
+                    Ok(metadata) => metadata,
+                };
 
                 Ok(vec![create::InputObject {
                     bucket: dyn_clone::clone_box(self),
@@ -588,6 +614,11 @@ impl Bucket for S3Bucket {
                 let prefix = Self::url_path_to_s3_path(&prefix);
                 debug!(bucket = %self.inner.name, prefix, "Archive input matches all S3 objects with a certain prefix");
 
+                // The callers of this method should have already parsed the URL and determine this
+                // is a prefix by the use of the trailing `/` character.
+                assert!(prefix.ends_with('/'),
+                    "BUG: It should not be possible to create a Prefix selector unless the prefix ends with `/`, but the caller passed prefix '{prefix}'");
+
                 // Use the paginated API to automatically handle dealing with continuation tokens
                 let pages = self
                     .inner
@@ -595,6 +626,7 @@ impl Bucket for S3Bucket {
                     .list_objects_v2()
                     .bucket(&self.inner.name)
                     .prefix(prefix)
+                    .delimiter("/")
                     .into_paginator()
                     .send();
 
@@ -611,8 +643,13 @@ impl Bucket for S3Bucket {
                     // this, and maybe it'll break in a future release, but for now this is much
                     // preferable because it means I can yield the owned `Vec` and not a ref which
                     // would not be possible to process as part of an async stream.
+                    //
+                    // NOTE: if there are no objects in this page, like when listing a prefix that
+                    // contains no objects (only child prefixes) then this will be None.  But this
+                    // isn't the right place to report an error, since there might be other pages
+                    // that do have contents.
                     let result: Result<Vec<aws_sdk_s3::model::Object>> =
-                        Ok(page.contents.expect("Object listings always have contents"));
+                        Ok(page.contents.unwrap_or_default());
 
                     result
                 });
@@ -621,12 +658,19 @@ impl Bucket for S3Bucket {
 
                 debug!(input_objects = input_objects.len(), bucket = %self.inner.name, prefix, "Matched all S3 objects with a certain prefix");
 
-                Ok(input_objects)
+                // If no objects matched then that's an error.
+                if input_objects.is_empty() {
+                    Err(crate::error::PrefixNotFoundOrEmptySnafu {
+                        bucket: self.inner.name.clone(),
+                        prefix: prefix.to_string(),
+                    }
+                    .into_error(snafu::NoneError))
+                } else {
+                    Ok(input_objects)
+                }
             }
             create::ObjectSelector::Bucket => {
-                // This is a simpler case of the above match arm, where the prefix is empty
-                // (meaning all objects match)
-                // Enumerate all objects within this prefix
+                // This is a very simple case, it includes all objects in the bucket
                 debug!(
                     bucket = %self.inner.name,
                     "Archive input matches everything in an S3 bucket"
@@ -687,11 +731,38 @@ impl Bucket for S3Bucket {
                     "Archive input matches objects in a bucket which match a glob pattern"
                 );
 
+                // As an optimization, figure out what part of the pattern string is just a regular
+                // string prefix, and when the pattern matching expressiosn start.  That will let
+                // us query the S3 API for only the objects that have a prefix that will match the
+                // pattern, saving iteration time on buckets with very large amounts of
+                // non-matching objects
+                let prefix = {
+                    // We compute which part of the pattern is just a literal string with no match
+                    // characters by converting the pattern into an escaped string with all match
+                    // expression characters escaped.  That obviously will be different than the
+                    // original pattern expression.  So the longest common prefix between the two
+                    // is the part that has no match pattern characters
+                    let escaped = glob::Pattern::escape(&pattern);
+
+                    longest_common_prefix(&pattern, &escaped)
+                        .map(|s| s.to_owned())
+                        .unwrap_or_default()
+                };
+
                 let pattern = glob::Pattern::new(pattern).with_context(|_| {
                     crate::error::InvalidGlobPatternSnafu {
                         pattern: pattern.to_string(),
                     }
                 })?;
+
+                // To make sure the glob matching behaviors like it does in unix shells, require
+                // that `/` path separator chars must be matched by literal `/` and will never be
+                // matched by a `*` or `?`.  Without this, `prefix1/*` will match an object
+                // `prefix1/prefix2/test` which is absolutely not how UNIX shell globbing works
+                let match_options = glob::MatchOptions {
+                    require_literal_separator: true,
+                    ..Default::default()
+                };
 
                 // Use the paginated API to automatically handle dealing with continuation tokens
                 let pages = self
@@ -699,6 +770,7 @@ impl Bucket for S3Bucket {
                     .client
                     .list_objects_v2()
                     .bucket(&self.inner.name)
+                    .prefix(prefix)
                     .into_paginator()
                     .send();
 
@@ -723,7 +795,7 @@ impl Bucket for S3Bucket {
                             // just an artifact of the machine-generated Rust bindings
                             let key = object.key().expect("Objects must have keys");
 
-                            pattern.matches(key)
+                            pattern.matches_with(key, match_options.clone())
                         })
                         .collect::<Vec<_>>();
 
@@ -1051,14 +1123,215 @@ async fn make_s3_client(config: &Config, region: impl Into<Option<String>>) -> a
     aws_sdk_s3::Client::from_conf(s3_config_builder.build())
 }
 
+/// Find the longest common prefix shared by two string slices.
+fn longest_common_prefix<'a, 'b>(a: &'a str, b: &'a str) -> Option<&'a str> {
+    if a.is_empty() {
+        return None;
+    }
+
+    for (a_idx, a_char) in a.chars().enumerate() {
+        if let Some(b_char) = b.chars().nth(a_idx) {
+            if b_char != a_char {
+                return Some(&a[..a_idx]);
+            }
+        } else {
+            return Some(&a[..a_idx]);
+        }
+    }
+
+    // The entirety of `a` is a shared prefix
+    Some(a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert_matches::assert_matches;
+    use color_eyre::Result;
+    use ssstar_testing::{minio, test_data};
+
+    /// Set up the ssstar config to use the specified Minio server
+    fn config_for_minio(server: &minio::MinioServer) -> crate::Config {
+        let mut config = crate::Config::default();
+
+        config.aws_region = Some("us-east-1".to_string());
+        config.aws_access_key_id = Some("minioadmin".to_string());
+        config.aws_secret_access_key = Some("minioadmin".to_string());
+        config.s3_endpoint = Some(server.endpoint_url());
+
+        config
+    }
+
+    /// Make an [`S3Bucket`] instance which talks to a bucket stored on a local Minio server
+    async fn open_bucket(server: &minio::MinioServer, bucket: &str) -> Result<S3Bucket> {
+        let s3 = S3::new(config_for_minio(server)).await;
+
+        Ok(S3Bucket::new(&s3, bucket).await?)
+    }
 
     #[test]
     fn app_name_is_valid() {
         // Make sure the compile time-generated app name is actually valid
         aws_config::AppName::new(APP_NAME)
             .unwrap_or_else(|_| panic!("App Name '{}' is invalid", APP_NAME));
+    }
+
+    /// Test various permutations of `list_matching_objects` against a Minio S3 bucket
+    #[test]
+    fn list_matching_objects_with_various_selectors() -> Result<()> {
+        ssstar_testing::logging::test_with_logging(async move {
+            let server = minio::MinioServer::get().await?;
+            let bucket = server.create_bucket("list_matching_objects", true).await?;
+            let test_data = test_data::make_test_data(
+                &server.aws_client().await?,
+                &bucket,
+                vec![
+                    test_data::TestObject::new("test", "1KiB"),
+                    test_data::TestObject::new("prefix1/test", "1KiB"),
+                    test_data::TestObject::new("prefix2/test", "1KiB"),
+                    test_data::TestObject::new("prefix3/test", "1KiB"),
+                    test_data::TestObject::new("prefix3/prefix4/test", "1KiB"),
+                ],
+            )
+            .await?;
+            let s3bucket = open_bucket(&server, &bucket).await?;
+
+            // an object selector that explicitly matches any of these objects should, obviously,
+            // produce that object and only that object
+            for object in test_data.keys() {
+                let objects = s3bucket
+                    .list_matching_objects(create::ObjectSelector::Object {
+                        key: object.to_string(),
+                        version_id: None,
+                    })
+                    .await?;
+
+                assert_eq!(1, objects.len(),
+                "Object selector for object '{}' should produce exactly one match for that precise object",
+                object);
+
+                let input_object = objects.first().unwrap();
+                assert_eq!(object, &input_object.key);
+            }
+
+            // An object selector that specifies a non-existent object should fail with a not found
+            // error
+            let result = s3bucket
+                .list_matching_objects(create::ObjectSelector::Object {
+                    key: "doesnt-exist/".to_string(),
+                    version_id: None,
+                })
+                .await;
+
+            assert_matches!(result, Err(crate::S3TarError::ObjectNotFound { .. }));
+
+            // Listing a prefix as an object should fail with a specific NotFound error if there is
+            // no object by that name
+            for prefix in ["prefix1/", "prefix3/", "prefix3/prefix4/"] {
+                let result = s3bucket
+                    .list_matching_objects(create::ObjectSelector::Object {
+                        key: prefix.to_string(),
+                        version_id: None,
+                    })
+                    .await;
+
+                assert_matches!(result, Err(crate::S3TarError::ObjectNotFound { .. }));
+            }
+
+            // Listing a prefix that doesn't exist should also fail with a NotFound error
+            let result = s3bucket
+                .list_matching_objects(create::ObjectSelector::Prefix {
+                    prefix: "doesnt-exist/".to_string(),
+                })
+                .await;
+
+            assert_matches!(result, Err(crate::S3TarError::PrefixNotFoundOrEmpty { .. }));
+
+            // Listing the entire bucket should produce all objects regardless of prefix
+            let objects = s3bucket
+                .list_matching_objects(create::ObjectSelector::Bucket)
+                .await?;
+
+            assert_eq!(objects.len(), test_data.len());
+
+            for object in objects {
+                assert!(test_data.contains_key(&object.key));
+            }
+
+            // Listing a specific prefix should match objects in that prefix, but it should not
+            // match objects in a child prefix.  so matching for `prefix3` should match
+            // `prefix3/test`, but not `prefix3/prefix4/test`
+            let objects = s3bucket
+                .list_matching_objects(create::ObjectSelector::Prefix {
+                    prefix: "prefix3/".to_string(),
+                })
+                .await?;
+
+            assert_eq!(1, objects.len());
+            assert_eq!("prefix3/test", &objects.first().unwrap().key);
+
+            let objects = s3bucket
+                .list_matching_objects(create::ObjectSelector::Prefix {
+                    prefix: "prefix3/prefix4/".to_string(),
+                })
+                .await?;
+
+            assert_eq!(1, objects.len());
+            assert_eq!("prefix3/prefix4/test", &objects.first().unwrap().key);
+
+            // Exercise glob patterns.
+
+            // The complete wildcard pattern matches everything
+            let objects = s3bucket
+                .list_matching_objects(create::ObjectSelector::Glob {
+                    pattern: "**".to_string(),
+                })
+                .await?;
+
+            assert_eq!(test_data.len(), objects.len());
+            for test_data_key in test_data.keys() {
+                assert!(objects
+                    .iter()
+                    .any(|input_object| &input_object.key == test_data_key));
+            }
+
+            // The `**` matches any prefix, and any object
+            let objects = s3bucket
+                .list_matching_objects(create::ObjectSelector::Glob {
+                    pattern: "prefix3/**".to_string(),
+                })
+                .await?;
+
+            assert_eq!(2, objects.len());
+            assert!(objects
+                .iter()
+                .any(|input_object| &input_object.key == "prefix3/prefix4/test"));
+            assert!(objects
+                .iter()
+                .any(|input_object| &input_object.key == "prefix3/test"));
+
+            // The `*` matches objects but not prefixes
+            let objects = s3bucket
+                .list_matching_objects(create::ObjectSelector::Glob {
+                    pattern: "prefix3/*".to_string(),
+                })
+                .await?;
+
+            assert_eq!(
+                1,
+                objects.len(),
+                "unexpected matching keys: {}",
+                objects
+                    .iter()
+                    .map(|io| io.key.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            assert!(objects
+                .iter()
+                .any(|input_object| &input_object.key == "prefix3/test"));
+
+            Ok(())
+        })
     }
 }

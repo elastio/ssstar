@@ -5,7 +5,9 @@ use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{Credentials, Endpoint, Region};
 use color_eyre::eyre::eyre;
 use duct::Handle;
+use once_cell::sync::Lazy;
 use rand::prelude::*;
+use regex::Regex;
 use std::{
     net::{SocketAddr, TcpListener},
     path::PathBuf,
@@ -134,7 +136,21 @@ impl MinioServer {
         bucket: impl AsRef<str>,
         enable_versioning: bool,
     ) -> Result<String> {
-        let bucket = format!("{}-{}", bucket.as_ref(), rand::thread_rng().next_u64());
+        // Bucket names can be a maximum of 63 characters, can consist of letters and numbers and .
+        // and - characters, with two `.` characters in a row forbidden.
+        //
+        // So need to make this bucket name comply with the rules
+        static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r##"[^0-9a-zA-Z\.\-]+"##).unwrap());
+
+        let bucket = REGEX.replace_all(bucket.as_ref(), "-");
+
+        // Shorten the bucket name so we can append the unique ID and it will still be under 63
+        // chars
+        let bucket = &bucket[..bucket.len().min(63 - 8)];
+
+        // Prepend a random number to ensure the bucket name is unique across multiple tests
+        let bucket = format!("{:08x}-{}", rand::thread_rng().next_u32(), bucket);
+
         let client = self.aws_client().await?;
 
         client.create_bucket().bucket(bucket.clone()).send().await?;
