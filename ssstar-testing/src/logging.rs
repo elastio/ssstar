@@ -1,7 +1,6 @@
 //! Logging in tests is important for troubleshooting, but works very differently then in
 //! production.
 use crate::Result;
-use once_cell::sync::Lazy;
 use std::{
     cell::RefCell,
     future::Future,

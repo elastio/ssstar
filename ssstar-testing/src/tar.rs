@@ -1,6 +1,7 @@
 //! Test helpers for working with tar archives, such as extracting them to temp dirs so their
 //! contents can be validated against expected test data.
 use crate::Result;
+use std::path::Path;
 use tempdir::TempDir;
 use tokio::io::AsyncRead;
 use url::Url;
@@ -56,4 +57,12 @@ pub async fn extract_tar_archive_from_s3_url(
     let reader = bytestream.into_async_read();
 
     extract_tar_archive_from_reader(reader).await
+}
+
+/// Extract a tar archive from a local file
+pub async fn extract_tar_archive_from_file(path: &Path) -> Result<TempDir> {
+    let file = tokio::fs::File::open(path).await?;
+
+    // Tokio `File` types implement `AsyncRed`
+    extract_tar_archive_from_reader(file).await
 }

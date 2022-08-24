@@ -177,10 +177,12 @@ impl TestCreateProgressCallback {
 
         // If there are archive bytes uploaded, they should add up to the completed total,
         // otherwise neither should be present
-        let (_, sum_archive_bytes_uploaded) = self.tar_archive_bytes_uploaded();
-        let archive_upload_completed_bytes = self.tar_archive_upload_completed();
+        let (archive_uploads, sum_archive_bytes_uploaded) = self.tar_archive_bytes_uploaded();
+        if archive_uploads > 0 {
+            let archive_upload_completed_bytes = self.tar_archive_upload_completed();
 
-        assert_eq!(sum_archive_bytes_uploaded, archive_upload_completed_bytes);
+            assert_eq!(sum_archive_bytes_uploaded, archive_upload_completed_bytes);
+        }
     }
 
     /// The number of object download started events, and the total size of all of them combined

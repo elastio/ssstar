@@ -5,8 +5,5 @@
 //! since these tests assume they can access Elastio-owned buckets specifically created for the
 //! purposes of running these tests.
 
-use crate::Result;
-use ssstar_testing::minio;
-
 // TODO: do at least one minimal smoke test against the real S3, including exercising correct
 // behavior when the bucket is in a different region than the AWS config specifies by default

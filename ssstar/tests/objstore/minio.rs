@@ -9,7 +9,9 @@ use assert_matches::assert_matches;
 use ssstar::S3TarError;
 use ssstar_testing::{minio, test_data};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::{path::Path, sync::Arc};
+use tempdir::TempDir;
 use url::Url;
 
 /// Set up the ssstar config to use the specified Minio server
@@ -29,6 +31,24 @@ fn tar_in_bucket(bucket: &str, key: &str) -> (Url, ssstar::TargetArchive) {
     let target_archive = ssstar::TargetArchive::ObjectStorage(url.clone());
 
     (url, target_archive)
+}
+
+fn tar_in_file() -> (TempDir, PathBuf, ssstar::TargetArchive) {
+    let tempdir = TempDir::new("ssstar-tests-tar").unwrap();
+    let path = tempdir.path().join("test.tar");
+
+    let target_archive = ssstar::TargetArchive::File(path.clone());
+
+    (tempdir, path, target_archive)
+}
+
+/// Same as `tar_in_file` except the file is exposed as an arbitrary `AsyncWrite` instead
+async fn tar_in_writer() -> (TempDir, PathBuf, ssstar::TargetArchive) {
+    let (tempdir, path, _) = tar_in_file();
+
+    let target_archive = ssstar::TargetArchive::Writer(Box::new(tokio::fs::File::create(&path).await.unwrap()));
+
+    (tempdir, path, target_archive)
 }
 
 /// Macro which helps to make tests that have a repetitive structure but vary only in certain
@@ -155,6 +175,53 @@ macro_rules! create_and_verify_test {
                     Ok(())
                 })
             }
+
+            /// The bucket with the input objects is versioned, and the resulting tar archive
+            /// is stored in a temp dir on the filesystem
+            #[test]
+            fn versioned_bucket_tar_in_file() -> Result<()> {
+                ssstar_testing::logging::test_with_logging(async move {
+                    let (server, bucket) = test_setup(true).await?;
+
+                    let (_tempdir, tar_path, target_archive) = tar_in_file();
+                    let test_data = test_data(&server, &bucket).await?;
+
+                    let job = make_job(&server, &bucket, target_archive).await?;
+
+                    run_job(job).await?;
+
+                    let tar_tmp_dir =
+                        ssstar_testing::tar::extract_tar_archive_from_file(&tar_path)
+                            .await?;
+
+                    validate_archive_contents(test_data, tar_tmp_dir.path()).await?;
+                    Ok(())
+                })
+            }
+
+            /// The bucket with the input objects is versioned, and the resulting tar archive
+            /// is stored in a temp dir on the filesystem but is passed to the create job as an
+            /// `AsyncWrite` impl not a file
+            #[test]
+            fn versioned_bucket_tar_in_writer() -> Result<()> {
+                ssstar_testing::logging::test_with_logging(async move {
+                    let (server, bucket) = test_setup(true).await?;
+
+                    let (_tempdir, tar_path, target_archive) = tar_in_writer().await;
+                    let test_data = test_data(&server, &bucket).await?;
+
+                    let job = make_job(&server, &bucket, target_archive).await?;
+
+                    run_job(job).await?;
+
+                    let tar_tmp_dir =
+                        ssstar_testing::tar::extract_tar_archive_from_file(&tar_path)
+                            .await?;
+
+                    validate_archive_contents(test_data, tar_tmp_dir.path()).await?;
+                    Ok(())
+                })
+            }
         }
     }
 }
@@ -193,7 +260,7 @@ fn input_path_matches_nothing() -> Result<()> {
             .create_bucket("input_path_matches_nothing", false)
             .await?;
         let (_, target_archive) = tar_in_bucket(&bucket, "test.tar");
-        let test_data = test_data::make_test_data(
+        let _test_data = test_data::make_test_data(
             &server.aws_client().await?,
             &bucket,
             vec![test_data::TestObject::new("test", "1KiB")],
@@ -254,5 +321,88 @@ create_and_verify_test! {
         ],
         @input_paths: ["/test", "/prefix1/", "/prefix3/"],
         @expected_objects: ["test", "prefix1/test", "prefix3/test"]
+    }
+}
+
+// When the total size of the archive exceeds 8MB, the target archive will be written to S3 as a
+// multi-part archive.  That's a very different code path.
+create_and_verify_test! {
+    small_objects_multipart_tar_archive {
+        @bucket_contents: [
+            "test1" => "1MiB",
+            "test2" => "2MiB",
+            "test3" => "3MiB",
+            "test4" => "4MiB",
+            "test5" => "5MiB"
+        ],
+        @input_paths: ["/"],
+        @expected_objects: ["test1", "test2", "test3", "test4", "test5"]
+    }
+}
+
+// When the size of an input object is larger than 8MB, that object is transfered in multiple parts
+create_and_verify_test! {
+    multipart_objects_multipart_tar_archive {
+        @bucket_contents: [
+            "test1" => "8MiB",
+            "test2" => "9MiB",
+            "test3" => "10MiB",
+            "test4" => "11MiB",
+            "test5" => "12MiB"
+        ],
+        @input_paths: ["/"],
+        @expected_objects: ["test1", "test2", "test3", "test4", "test5"]
+    }
+}
+
+// With a lot of small objects, it will fill up the queue with objects to process and exert
+// back-pressure on the transfer task
+create_and_verify_test! {
+    many_small_objects {
+        @bucket_contents: [
+            "test1" => "1KiB",
+            "test2" => "1KiB",
+            "test3" => "1KiB",
+            "test4" => "1KiB",
+            "test5" => "1KiB",
+            "test6" => "1KiB",
+            "test7" => "1KiB",
+            "test8" => "1KiB",
+            "test9" => "1KiB",
+            "test10" => "1KiB",
+            "test11" => "1KiB",
+            "test12" => "1KiB",
+            "test13" => "1KiB",
+            "test14" => "1KiB",
+            "test15" => "1KiB",
+            "test16" => "1KiB",
+            "test17" => "1KiB",
+            "test18" => "1KiB",
+            "test19" => "1KiB",
+            "test20" => "1KiB"
+        ],
+        @input_paths: ["/"],
+        @expected_objects: [
+            "test1",
+            "test2",
+            "test3",
+            "test4",
+            "test5",
+            "test6",
+            "test7",
+            "test8",
+            "test9",
+            "test10",
+            "test11",
+            "test12",
+            "test13",
+            "test14",
+            "test15",
+            "test16",
+            "test17",
+            "test18",
+            "test19",
+            "test20"
+        ]
     }
 }

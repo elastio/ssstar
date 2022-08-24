@@ -8,6 +8,5 @@
 /// Test code that reports errors can just cheat and use `eyre`
 type Result<T> = color_eyre::Result<T>;
 
-mod tar;
 mod objstore;
 mod progress;
