@@ -4,12 +4,17 @@ use std::{borrow::Cow, future::Future, time::Duration};
 
 /// Display a spinner while some long-running but unmeasurable task is running, then hide the
 /// spinner when it finishes
-pub(crate) async fn with_spinner<S, F, T>(message: S, task: F) -> T
+pub(crate) async fn with_spinner<S, F, T>(globals: &super::Globals, message: S, task: F) -> T
 where
     S: Into<Cow<'static, str>>,
     F: Future<Output = T>,
 {
-    let spinner = indicatif::ProgressBar::new_spinner();
+    let spinner = if !hide_progress(globals) {
+        indicatif::ProgressBar::new_spinner()
+    } else {
+        indicatif::ProgressBar::hidden()
+    };
+
     spinner.set_style(
         indicatif::ProgressStyle::with_template("{spinner:.blue} {msg}")
             .unwrap()
@@ -28,11 +33,21 @@ where
 }
 
 /// Run the specified archive creation job, with progress bars for extra pretty-ness
-pub(crate) async fn run_create_job(job: ssstar::CreateArchiveJob) -> Result<()> {
-    let progress = CreateProgressReport::new(&job);
+pub(crate) async fn run_create_job(
+    globals: &super::Globals,
+    job: ssstar::CreateArchiveJob,
+) -> Result<()> {
+    let progress = CreateProgressReport::new(hide_progress(globals), &job);
 
     // TODO: implement abort functionality
     job.run(futures::future::pending(), progress).await
+}
+
+/// Progress should be hidden for either of verbose mode (because there will be a flurry of log
+/// messages and the progress bar rendering will be all messed up), or quiet mode (because
+/// progress bars are not quiet).
+fn hide_progress(globals: &super::Globals) -> bool {
+    globals.verbose || globals.quiet
 }
 
 /// Progress reporting for the create operation, which receives progress updates from the lib crate
@@ -81,7 +96,7 @@ struct CreateProgressReport {
 }
 
 impl CreateProgressReport {
-    fn new(job: &ssstar::CreateArchiveJob) -> Self {
+    fn new(hide_progress: bool, job: &ssstar::CreateArchiveJob) -> Self {
         fn standard_style() -> indicatif::ProgressStyle {
             indicatif::ProgressStyle::with_template("{spinner:.green} {prefix}: {msg:<45!} [{bar:20.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
         .unwrap()
@@ -101,7 +116,11 @@ impl CreateProgressReport {
             format!("{prefix:>25}")
         }
 
-        let multi = indicatif::MultiProgress::new();
+        let multi = if !hide_progress {
+            indicatif::MultiProgress::new()
+        } else {
+            indicatif::MultiProgress::with_draw_target(indicatif::ProgressDrawTarget::hidden())
+        };
 
         let total_bytes = job.total_bytes();
 

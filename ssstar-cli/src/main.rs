@@ -164,22 +164,24 @@ impl Command {
 
                 let mut builder = CreateArchiveJobBuilder::new(globals.config.clone(), target);
 
-                let builder = progress::with_spinner("Validating input URLs...", async move {
-                    for url in objects {
-                        builder.add_input(&url).await?;
-                    }
+                let builder =
+                    progress::with_spinner(&globals, "Validating input URLs...", async move {
+                        for url in objects {
+                            builder.add_input(&url).await?;
+                        }
 
-                    Ok(builder)
-                })
-                .await?;
+                        Ok(builder)
+                    })
+                    .await?;
 
                 let job = progress::with_spinner(
+                    &globals,
                     "Counting input objects to archive to tar...",
                     async move { builder.build().await },
                 )
                 .await?;
 
-                progress::run_create_job(job).await?;
+                progress::run_create_job(&globals, job).await?;
 
                 Ok(())
             }
