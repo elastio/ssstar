@@ -491,8 +491,6 @@ impl S3Bucket {
     ) -> Result<Option<String>> {
         if let Err(e) = client.head_bucket().bucket(name).send().await {
             if let aws_sdk_s3::types::SdkError::ServiceError { raw, .. } = &e {
-                println!("{:#?}", raw);
-
                 let response = raw.http();
                 if response.status() == http::StatusCode::MOVED_PERMANENTLY {
                     if let Some(value) = response.headers().get("x-amz-bucket-region") {

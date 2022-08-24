@@ -374,6 +374,9 @@ impl CreateArchiveJobBuilder {
 /// progressing.
 #[allow(unused_variables)]
 pub trait CreateProgressCallback: Sync + Send {
+    /// The process of downloading all of the input objects is about to start
+    fn input_objects_download_starting(&self, total_objects: usize, total_bytes: u64) {}
+
     /// The download of a new input object is starting.
     ///
     /// In truth downloads happen in parallel, but they are yielded in precisely the order they
@@ -564,6 +567,8 @@ impl CreateArchiveJob {
         let progress: Arc<dyn CreateProgressCallback> = Arc::new(progress);
         let total_bytes = self.total_bytes();
         let total_objects = self.total_objects();
+
+        progress.input_objects_download_starting(total_objects, total_bytes);
 
         // There must be at least one object otherwise it doesn't make sense to proceed
         if total_objects == 0 {

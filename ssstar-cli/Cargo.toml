@@ -28,6 +28,7 @@ tracing = "0.1.36"
 tokio = { version = "1.20.1", features = ["full"] }
 color-eyre = "0.6.2"
 futures = "0.3.21"
+indicatif = "0.17.0"
 
 [build-dependencies]
 vergen = "7.4.0"

@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use tracing::debug;
 use url::Url;
 
+mod progress;
+
 const VERSION_DETAILS: &str = concat!(
     env!("VERGEN_BUILD_SEMVER"),
     " (",
@@ -162,19 +164,22 @@ impl Command {
 
                 let mut builder = CreateArchiveJobBuilder::new(globals.config.clone(), target);
 
-                for url in objects {
-                    builder.add_input(&url).await?;
-                }
+                let builder = progress::with_spinner("Validating input URLs...", async move {
+                    for url in objects {
+                        builder.add_input(&url).await?;
+                    }
 
-                let job = builder.build().await?;
+                    Ok(builder)
+                })
+                .await?;
 
-                println!(
-                    "Creating archive with {} of data from {} objects",
-                    byte_unit::Byte::from_bytes(job.total_bytes().into())
-                        .get_appropriate_unit(true),
-                    job.total_objects()
-                );
-                job.run_without_progress(futures::future::pending()).await?;
+                let job = progress::with_spinner(
+                    "Counting input objects to archive to tar...",
+                    async move { builder.build().await },
+                )
+                .await?;
+
+                progress::run_create_job(job).await?;
 
                 Ok(())
             }
@@ -272,12 +277,6 @@ fn main() -> color_eyre::Result<()> {
     let rt = builder.enable_all().build().unwrap();
 
     let result: color_eyre::Result<()> = rt.block_on(async move {
-        tracing::info!("This is an info message bitch!");
-
-        println!("Hello, world!");
-
-        println!("{:#?}", args);
-
         args.command.run(&args.global).await?;
 
         color_eyre::Result::<()>::Ok(())

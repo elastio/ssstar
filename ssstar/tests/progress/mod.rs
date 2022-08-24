@@ -7,6 +7,11 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Debug, strum::EnumDiscriminants)]
 #[allow(dead_code)] // Not all of these are used in tests but we want to capture all fields for all events
 pub(crate) enum CreateProgressEvent {
+    InputObjectsDownloadStarting {
+        total_objects: usize,
+        total_bytes: u64,
+    },
+
     InputObjectDownloadStarted {
         bucket: String,
         key: String,
@@ -127,15 +132,25 @@ impl TestCreateProgressCallback {
             self.input_part_downloaded()
         );
 
+        // The totals reported at the start of the download should match the conclusion
+        let (input_objects_downloading, input_object_bytes_downloading) =
+            self.input_objects_download_starting();
+
+        assert_eq!(
+            (input_objects_downloading, input_object_bytes_downloading),
+            self.input_object_download_started()
+        );
+
         // The total size of objects downloaded, parts downloaded, and the final event with total
         // bytes downloaded should all be the same
         let (input_objects_downloaded, input_object_bytes_downloaded) =
             self.input_object_download_completed();
         let (input_parts_downloaded, input_part_bytes_downloaded) = self.input_part_downloaded();
         let total_input_objects_bytes_downloaded = self.input_objects_download_completed();
+        assert_eq!(input_objects_downloaded, input_objects_downloading);
         assert_eq!(
-            total_input_objects_bytes_downloaded,
-            input_part_bytes_downloaded
+            input_object_bytes_downloaded,
+            input_object_bytes_downloading
         );
         assert_eq!(
             total_input_objects_bytes_downloaded,
@@ -183,6 +198,21 @@ impl TestCreateProgressCallback {
 
             assert_eq!(sum_archive_bytes_uploaded, archive_upload_completed_bytes);
         }
+    }
+
+    /// The values passed to the one and only download starting event
+    pub fn input_objects_download_starting(&self) -> (usize, u64) {
+        let event = self
+            .filter_single_event(CreateProgressEventDiscriminants::InputObjectsDownloadStarting)
+            .unwrap();
+        with_match!(
+            event,
+            CreateProgressEvent::InputObjectsDownloadStarting {
+                total_objects,
+                total_bytes
+            },
+            { (total_objects, total_bytes) }
+        )
     }
 
     /// The number of object download started events, and the total size of all of them combined
@@ -438,6 +468,13 @@ impl std::fmt::Debug for TestCreateProgressCallback {
 }
 
 impl CreateProgressCallback for TestCreateProgressCallback {
+    fn input_objects_download_starting(&self, total_objects: usize, total_bytes: u64) {
+        self.report_event(CreateProgressEvent::InputObjectsDownloadStarting {
+            total_objects,
+            total_bytes,
+        });
+    }
+
     fn input_object_download_started(
         &self,
         bucket: &str,
