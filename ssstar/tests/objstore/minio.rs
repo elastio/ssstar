@@ -46,7 +46,8 @@ fn tar_in_file() -> (TempDir, PathBuf, ssstar::TargetArchive) {
 async fn tar_in_writer() -> (TempDir, PathBuf, ssstar::TargetArchive) {
     let (tempdir, path, _) = tar_in_file();
 
-    let target_archive = ssstar::TargetArchive::Writer(Box::new(tokio::fs::File::create(&path).await.unwrap()));
+    let target_archive =
+        ssstar::TargetArchive::Writer(Box::new(tokio::fs::File::create(&path).await.unwrap()));
 
     (tempdir, path, target_archive)
 }

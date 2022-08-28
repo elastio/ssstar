@@ -10,5 +10,5 @@
 //! [minio](https://min.io), the later of which obviously assuming that minio is installed on the
 //! local system
 
-mod s3;
 mod minio;
+mod s3;

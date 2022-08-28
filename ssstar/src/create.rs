@@ -605,7 +605,9 @@ impl CreateArchiveJob {
                 let (bucket, key, _) = objstore.parse_url(&url).await?;
 
                 // The key is a required component here
-                let key = key.ok_or_else(|| crate::error::ArchiveUrlInvalidSnafu { url: url.clone() }.build())?;
+                let key = key.ok_or_else(|| {
+                    crate::error::ArchiveUrlInvalidSnafu { url: url.clone() }.build()
+                })?;
 
                 // Create a writer that will upload all written data to this object
                 let (bytes_writer, mut progress_receiver, result_receiver) = bucket

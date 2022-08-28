@@ -164,7 +164,7 @@ pub enum S3TarError {
     UploadWriterError { source: std::io::Error },
 
     #[snafu(display("A spawned async task task panicked or was canceled"))]
-    Spawn{ source: tokio::task::JoinError },
+    Spawn { source: tokio::task::JoinError },
 
     #[snafu(display("A blocking task panicked or was canceled"))]
     SpawnBlocking { source: tokio::task::JoinError },

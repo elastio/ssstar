@@ -27,7 +27,10 @@ pub(crate) trait ObjectStorage: DynClone + std::fmt::Debug + Sync + Send + 'stat
     /// specified bucket doesn't exist.  Does not verify that the object key or version ID exist.
     ///
     /// Result of a tuple of `(bucket, key, version_id)`
-    async fn parse_url(&self, url: &Url) -> Result<(Box<dyn Bucket>, Option<String>, Option<String>)>;
+    async fn parse_url(
+        &self,
+        url: &Url,
+    ) -> Result<(Box<dyn Bucket>, Option<String>, Option<String>)>;
 
     /// Given a URL that contains a bucket (and possibly an object key or glob also), extract the
     /// bucket name, validate it against the underlying object storage system, and if it's valid
