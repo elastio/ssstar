@@ -1,6 +1,41 @@
-//! Implementation of the extract operation which restores from a tar archive to S3
+//! Implementation of the extract operation which restores from a tar archive to S3.
+//!
+//! The pattern used for archive creation is similar to the way extract works.  The caller starts
+//! with [`ExtractArchiveJobBuilder`], optionally adds extract filters, then calls
+//! [`ExtractArchiveJobBuilder::build`] to construct an [`ExtractArchiveJob`] instance.  A call to
+//! [`ExtractArchiveJob::run`] actually performs the job.  Progress is reported via  a
+//! caller-provided implementation of the [`ExtractProgressCallback`] trait.
+//!
+//! Unfortunately extract isn't quite as parallelized as archive creation.  Archive creation will
+//! perform many parallel downloads of objects, or even if there's only one object to archive it
+//! will perform many parallel downloads of different parts of the object in parallel.  Archive
+//! extraction doesn't have that luxury.
+//!
+//! While the archive, if located on object storage, will be broken up into chunks and downloaded
+//! in parallel (up to the max request count), nonetheless the sequential nature of the tar format
+//! means that the `tar` crate will yield entries one at a time, and it's not possible using the
+//! `tar` crate's API to read multiple non-overlapping ranges of each object in parallel.  So the
+//! extract process runs serially, producing objects to extract to object storage.
+//!
+//! If the archive contains mainly very large objects (100MB or larger), extract performance will
+//! still benefit from parallel processing because the uploading of those large objects, once their
+//! data is extracted, can be done in parallel using the
+//! [`crate::objstore::Bucket::create_object_writer`] method.  This will buffer chunks extracted
+//! from the tar archive and perform multiple parallel chunk uploads until the entire object has
+//! been extracted.  Assuming the upload to object storage is slower than the extracting of the
+//! archive from whatever source it came from, the use of parallel chunk uploads will improve
+//! performance compared to a non-parallel approach.
+//!
+//! However, for archives with many small (< the multipart threshold) objects, none of this
+//! parallelism will be available, so each object will be restored to object storage one at a time.
+//! For small objects, uploading the data takes no time at all, so the latency of the S3 API calls
+//! dominates.
+//!
+//! Perhaps a future enhancement will enhance this so that even in the case of many small objects
+//! the extract process can benefit from parallelism, but this is much more challenging than in the
+//! archive creation implementation.
 use crate::objstore::{Bucket, ObjectStorageFactory};
-use crate::tar::TarBuilderWrapper;
+use crate::tar::CountingReader;
 use crate::{Config, Result};
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
@@ -32,7 +67,7 @@ pub enum SourceArchive {
     File(PathBuf),
 
     /// Read the tar archive to some arbitrary [`std::io::Read`] impl.
-    Reader(Box<dyn Read + Send + Unpin>),
+    Reader(Box<dyn Read + Send>),
 }
 
 impl std::fmt::Debug for SourceArchive {
@@ -140,8 +175,11 @@ impl SourceArchiveInternal {
     /// archive.
     ///
     /// This needs to be blocking because the `tar` crate doesn't work with async I/O.
-    async fn into_reader(self) -> Result<Box<dyn Read + Send>> {
-        match self {
+    async fn into_reader(
+        self,
+        progress: Arc<dyn ExtractProgressCallback>,
+    ) -> Result<CountingReader<Box<dyn Read + Send>>> {
+        let reader: Box<dyn Read + Send> = match self {
             Self::ObjectStorage {
                 bucket,
                 key,
@@ -150,11 +188,11 @@ impl SourceArchiveInternal {
             } => {
                 // Read the object as a stream of chunks of bytes, then use our async bridge code
                 // to put a blocking `Read` interface on top
-                Ok(Box::new(crate::async_bridge::stream_as_reader(
+                Box::new(crate::async_bridge::stream_as_reader(
                     tokio_stream::wrappers::ReceiverStream::new(
                         bucket.read_object(key, version_id, 0..len).await?,
                     ),
-                )))
+                ))
             }
             SourceArchiveInternal::File { path, metadata } => {
                 // Open the file with the blocking `File::open` which needs to be done in a
@@ -167,10 +205,15 @@ impl SourceArchiveInternal {
                 .await
                 .with_context(|_| crate::error::SpawnBlockingSnafu {})??;
 
-                Ok(Box::new(file))
+                Box::new(file)
             }
-            SourceArchiveInternal::Reader(reader) => Ok(reader),
-        }
+            SourceArchiveInternal::Reader(reader) => reader,
+        };
+
+        // We need to wrap whatever the reader is in `CountingReader` both to report progress as
+        // the archive is read, but also so we can report the total size of the archive at the end
+        // of the extraction.
+        Ok(CountingReader::new(reader, progress))
     }
 }
 
@@ -237,6 +280,7 @@ impl ExtractFilter {
     }
 }
 
+#[derive(Debug)]
 pub struct ExtractArchiveJobBuilder {
     config: Config,
     objstore_factory: Arc<ObjectStorageFactory>,
@@ -355,6 +399,7 @@ pub trait ExtractProgressCallback: Sync + Send {
     fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64) {}
 }
 
+#[derive(Debug)]
 pub struct ExtractArchiveJob {
     config: Config,
     source_archive: SourceArchiveInternal,
@@ -403,64 +448,74 @@ impl ExtractArchiveJob {
 
             let progress: Arc<dyn ExtractProgressCallback> = Arc::new(progress);
 
+            progress.extract_starting(self.archive_size);
+
             // The reading of entries from the tar archive using the `tar` crate is a blocking
             // operation.  Start a blocking task to do that now.
             let (entry_sender, entry_receiver) = mpsc::channel(self.config.max_concurrent_requests);
             let reader_span =
                 info_span!("read_tar_entries_blocking", source_archive = ?self.source_archive);
-            let reader = self.source_archive.into_reader().await?;
-            let reader_fut = tokio::task::spawn_blocking(move || {
-                let _guard = reader_span.enter();
+            let reader = self.source_archive.into_reader(progress.clone()).await?;
+            let reader_fut = {
+                let progress = progress.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _guard = reader_span.enter();
 
-                debug!("Starting blocking tar read task");
+                    debug!("Starting blocking tar read task");
 
-                match Self::read_tar_entries_blocking(
-                    self.filters,
-                    reader,
-                    entry_sender,
-                    self.config.multipart_threshold.get_bytes() as usize,
-                    self.config.multipart_chunk_size.get_bytes() as usize,
-                ) {
-                    Ok(()) => {
-                        debug!("Blocking tar read task completing successfully");
+                    match Self::read_tar_entries_blocking(
+                        self.filters,
+                        reader,
+                        progress,
+                        entry_sender,
+                        self.config.multipart_threshold.get_bytes() as usize,
+                        self.config.multipart_chunk_size.get_bytes() as usize,
+                    ) {
+                        Ok(()) => {
+                            debug!("Blocking tar read task completing successfully");
 
-                        Ok(())
+                            Ok(())
+                        }
+                        Err(e) => {
+                            error!(err = ?e, "Blocking tar read task failed");
+
+                            Err(e)
+                        }
                     }
-                    Err(e) => {
-                        error!(err = ?e, "Blocking tar read task failed");
-
-                        Err(e)
-                    }
-                }
-            });
+                })
+            };
 
             // Start an async task that will process those `TarEntry` structs produced by the
             // blocking tar reader task
 
-            let processor_fut = tokio::spawn(async move {
-                debug!("Starting tar entry processor task");
+            let processor_fut = {
+                let progress = progress.clone();
 
-                match Self::process_tar_entries(
-                    self.target_bucket,
-                    self.target_prefix,
-                    progress.clone(),
-                    entry_receiver,
-                )
-                .await
-                {
-                    Ok(()) => {
-                        debug!("Tar entry processor task completed successfully");
+                tokio::spawn(async move {
+                    debug!("Starting tar entry processor task");
 
-                        Ok(())
+                    match Self::process_tar_entries(
+                        self.target_bucket,
+                        self.target_prefix,
+                        progress,
+                        entry_receiver,
+                    )
+                    .await
+                    {
+                        Ok(totals) => {
+                            debug!("Tar entry processor task completed successfully");
+
+                            Ok(totals)
+                        }
+
+                        Err(e) => {
+                            error!(err = ?e, "Tar entry processor task failed");
+
+                            Err(e)
+                        }
                     }
-
-                    Err(e) => {
-                        error!(err = ?e, "Tar entry processor task failed");
-
-                        Err(e)
-                    }
-                }
-            });
+                })
+            };
 
             // Wait for both tasks to finish and only then look at results
             let (reader_result, processor_result) = futures::join!(reader_fut, processor_fut);
@@ -468,7 +523,10 @@ impl ExtractArchiveJob {
             // If there's an error in the reader, the processor can also fail but with a less
             // meaningful error.  So evaluate reader results first.
             reader_result.with_context(|_| crate::error::SpawnBlockingSnafu {})??;
-            processor_result.with_context(|_| crate::error::SpawnSnafu {})??;
+            let (total_objects, total_object_bytes) =
+                processor_result.with_context(|_| crate::error::SpawnSnafu {})??;
+
+            progress.objects_uploaded(total_objects, total_object_bytes);
 
             info!("Finished extract job");
 
@@ -482,12 +540,18 @@ impl ExtractArchiveJob {
     /// onto the MPSC queue where they will be processed by async code doing the extraction
     fn read_tar_entries_blocking(
         filters: Vec<ExtractFilter>,
-        reader: Box<dyn Read + Send>,
+        reader: CountingReader<Box<dyn Read + Send>>,
+        progress: Arc<dyn ExtractProgressCallback>,
         mut entry_sender: mpsc::Sender<TarEntryComponent>,
         multipart_threshold: usize,
         multipart_chunk_size: usize,
     ) -> Result<()> {
         let mut archive = tar::Archive::new(reader);
+
+        let mut extracted_objects = 0usize;
+        let mut extracted_object_bytes = 0u64;
+        let mut skipped_objects = 0usize;
+        let mut skipped_object_bytes = 0u64;
 
         for result in archive
             .entries()
@@ -500,6 +564,7 @@ impl ExtractArchiveJob {
                 .with_context(|_| crate::error::TarReadSnafu {})?
                 .into_owned();
             let len = entry.size();
+            let key = path.display().to_string();
 
             let span = debug_span!("Processing tar entry", path = %path.display(), len);
             let _guard = span.enter();
@@ -526,8 +591,14 @@ impl ExtractArchiveJob {
             };
 
             if !included {
+                progress.extract_object_skipped(&key, len);
+                skipped_objects += 1;
+                skipped_object_bytes += len;
+
                 continue;
             }
+
+            progress.extract_object_starting(&key, len);
 
             // the `tar::Entry` type itself implements `Read` which will read the data for the
             // entry.
@@ -536,6 +607,11 @@ impl ExtractArchiveJob {
                 // This file is small enough there's no value in processing it as multiple parts
                 debug!("Processing entry as a small file");
                 let data = Self::read_data(&mut entry, len as usize)?;
+
+                progress.extract_object_part_read(&key, len as usize);
+                progress.extract_object_finished(&key, len);
+                extracted_objects += 1;
+                extracted_object_bytes += len;
 
                 Self::send_component(
                     TarEntryComponent::SmallFile { path, data },
@@ -564,6 +640,7 @@ impl ExtractArchiveJob {
                         bytes_remaining.min(multipart_chunk_size as u64) as usize,
                     )?;
                     bytes_remaining -= data.len() as u64;
+                    progress.extract_object_part_read(&key, data.len());
 
                     let component = if bytes_remaining > 0 {
                         TarEntryComponent::FilePart { data }
@@ -573,10 +650,25 @@ impl ExtractArchiveJob {
 
                     Self::send_component(component, &mut entry_sender)?;
                 }
+
+                progress.extract_object_finished(&key, len);
+                extracted_objects += 1;
+                extracted_object_bytes += len;
             }
         }
 
         debug!("Completed processing all tar entries");
+
+        // Recover the underlying CountingReader to we can get the total read bytes count
+        let reader = archive.into_inner();
+
+        progress.extract_finished(
+            extracted_objects,
+            extracted_object_bytes,
+            skipped_objects,
+            skipped_object_bytes,
+            reader.total_bytes_read(),
+        );
 
         Ok(())
     }
@@ -606,24 +698,45 @@ impl ExtractArchiveJob {
         Ok(())
     }
 
+    /// Async worker task that gets tar entry components from the reader task and performs upload
+    /// of those components to object storage.
+    ///
+    /// Returns the total number of objects and total number of bytes uploaded for progress
+    /// reporting by the caller, since this function can't tell if `entry_receiver` stopped
+    /// producing components because there is no more work to to, or because of an error in the
+    /// reader.
     #[instrument(skip(progress, entry_receiver))]
     async fn process_tar_entries(
         target_bucket: Box<dyn Bucket>,
         target_prefix: String,
         progress: Arc<dyn ExtractProgressCallback>,
         mut entry_receiver: mpsc::Receiver<TarEntryComponent>,
-    ) -> Result<()> {
+    ) -> Result<(usize, u64)> {
         // Keep processing entries until the sender is dropped
+        let mut total_objects = 0usize;
+        let mut total_object_bytes = 0u64;
+
         while let Some(tar_entry_component) = entry_receiver.recv().await {
             match tar_entry_component {
                 TarEntryComponent::SmallFile { path, data } => {
                     let key = format!("{}{}", target_prefix, path.display());
-                    debug!(path= %path.display(),len=data.len(),%key,"Uploading small file");
-                    target_bucket.put_small_object(key, data).await?;
+                    let len = data.len();
+                    debug!(path= %path.display(),len, %key, "Uploading small file");
+
+                    progress.object_upload_starting(&key, len as u64);
+
+                    target_bucket.put_small_object(key.clone(), data).await?;
+
+                    progress.object_part_uploaded(&key, len);
+                    progress.object_uploaded(&key, len as u64);
+                    total_objects += 1;
+                    total_object_bytes += len as u64;
                 }
                 TarEntryComponent::StartMultipartFile { path, len } => {
                     let key = format!("{}{}", target_prefix, path.display());
                     debug!(path = %path.display(), len, %key, "Starting multipart file upload");
+
+                    progress.object_upload_starting(&key, len);
 
                     let (mut bytes_writer, mut progress_receiver, mut result_receiver) =
                         target_bucket
@@ -675,7 +788,7 @@ impl ExtractArchiveJob {
                             },
                             result = progress_receiver.recv() => {
                                 if let Some(bytes_uploaded) = result {
-                                    // TODO: do something with progress
+                                    progress.object_part_uploaded(&key, bytes_uploaded);
                                 }
                             },
                         }
@@ -688,7 +801,7 @@ impl ExtractArchiveJob {
                     // longer, and maybe several seconds.  Keep up with progress updates during
                     // that types.
                     while let Some(bytes_uploaded) = progress_receiver.recv().await {
-                        // TODO: do something with progress
+                        progress.object_part_uploaded(&key, bytes_uploaded);
                     }
 
                     // Whether the loop exited with a success or error result, if there's an error
@@ -697,9 +810,12 @@ impl ExtractArchiveJob {
                     match result_receiver.await {
                         Ok(Ok(total_bytes_uploaded)) => {
                             // Everything is good on the uploader side
-                            trace!(path = %path.display(), "Async upload task succeeded");
+                            assert_eq!(len, total_bytes_uploaded);
+                            trace!(path = %path.display(), len, %key, "Async upload task succeeded");
 
-                            // TODO: do something with progress
+                            progress.object_uploaded(&key, len);
+                            total_objects += 1;
+                            total_object_bytes += len;
                         }
                         Ok(Err(e)) => {
                             // The async upload task reported an error
@@ -732,7 +848,7 @@ impl ExtractArchiveJob {
 
         debug!("Entry sender dropped; no more tar entries to process");
 
-        Ok(())
+        Ok((total_objects, total_object_bytes))
     }
 }
 

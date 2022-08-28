@@ -273,7 +273,7 @@ impl S3Bucket {
         key: String,
         upload_id: String,
         chunks_receiver: mpsc::Receiver<crate::writers::MultipartChunk>,
-        progress_sender: mpsc::UnboundedSender<u64>,
+        progress_sender: mpsc::UnboundedSender<usize>,
     ) -> Result<u64> {
         // `Receiver` can be made to implement `Stream` which will let us move the heavy lifting
         // off onto `futures`
@@ -320,7 +320,7 @@ impl S3Bucket {
 
                 debug!(%e_tag, "Uploaded multi-part chunk");
 
-                let _ = progress_sender.send(chunk_size as u64);
+                let _ = progress_sender.send(chunk_size);
 
                 // Once all of the uploads are done we must provide the information about each part
                 // to the CompleteMultipartUpload call, so retain the key bits here
@@ -400,7 +400,7 @@ impl S3Bucket {
         &self,
         key: String,
         chunks_receiver: oneshot::Receiver<bytes::Bytes>,
-        progress_sender: mpsc::UnboundedSender<u64>,
+        progress_sender: mpsc::UnboundedSender<usize>,
     ) -> Result<u64> {
         // It seems a bit clumsy to do this single chunk upload in an async background task instead
         // of just doing it directly in this method, but the same code in `create`
@@ -420,7 +420,7 @@ impl S3Bucket {
 
         self.put_small_object(key, bytes).await?;
 
-        let _ = progress_sender.send(total_bytes);
+        let _ = progress_sender.send(total_bytes as usize);
 
         Ok(total_bytes)
     }
@@ -936,6 +936,7 @@ impl Bucket for S3Bucket {
             .put_object()
             .bucket(self.inner.name.clone())
             .key(key.clone())
+            .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
             .body(aws_sdk_s3::types::ByteStream::from(data))
             .send()
             .await
@@ -954,7 +955,7 @@ impl Bucket for S3Bucket {
         size_hint: Option<u64>,
     ) -> Result<(
         DuplexStream,
-        mpsc::UnboundedReceiver<u64>,
+        mpsc::UnboundedReceiver<usize>,
         oneshot::Receiver<Result<u64>>,
     )> {
         // S3 requires that multi-part be initialized in advance, then each individual part can be
@@ -1026,6 +1027,7 @@ impl Bucket for S3Bucket {
                     .create_multipart_upload()
                     .bucket(&self.inner.name)
                     .key(key.clone())
+                    .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
                     .send()
                     .await
                     .with_context(|_| crate::error::CreateMultipartUploadSnafu {

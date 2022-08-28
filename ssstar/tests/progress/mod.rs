@@ -1,7 +1,7 @@
 //! Test helper that implements [`ssstar::CreateProgressCallback`] which keeps a record of every progress
 //! update in order so we can write tests that verify behavior or progress reporting functionality.
 use more_asserts::*;
-use ssstar::CreateProgressCallback;
+use ssstar::{CreateProgressCallback, ExtractProgressCallback};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, strum::EnumDiscriminants)]
@@ -68,7 +68,7 @@ pub(crate) enum CreateProgressEvent {
     },
 
     TarArchiveBytesWritten {
-        bytes_written: u64,
+        bytes_written: usize,
     },
 
     TarArchiveWritesCompleted {
@@ -76,7 +76,7 @@ pub(crate) enum CreateProgressEvent {
     },
 
     TarArchiveBytesUploaded {
-        bytes_uploaded: u64,
+        bytes_uploaded: usize,
     },
 
     TarArchiveUploadCompleted {
@@ -365,7 +365,7 @@ impl TestCreateProgressCallback {
                 with_match!(
                     event,
                     CreateProgressEvent::TarArchiveBytesWritten { bytes_written, .. },
-                    { bytes_written }
+                    { bytes_written as u64 }
                 )
             })
             .sum();
@@ -398,7 +398,7 @@ impl TestCreateProgressCallback {
                 with_match!(
                     event,
                     CreateProgressEvent::TarArchiveBytesUploaded { bytes_uploaded, .. },
-                    { bytes_uploaded }
+                    { bytes_uploaded as u64 }
                 )
             })
             .sum();
@@ -588,7 +588,7 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         });
     }
 
-    fn tar_archive_bytes_written(&self, bytes_written: u64) {
+    fn tar_archive_bytes_written(&self, bytes_written: usize) {
         self.report_event(CreateProgressEvent::TarArchiveBytesWritten { bytes_written });
     }
 
@@ -598,11 +598,478 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         });
     }
 
-    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: u64) {
+    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: usize) {
         self.report_event(CreateProgressEvent::TarArchiveBytesUploaded { bytes_uploaded });
     }
 
     fn tar_archive_upload_completed(&self, size: u64) {
         self.report_event(CreateProgressEvent::TarArchiveUploadCompleted { size });
+    }
+}
+
+#[derive(Clone, Debug, strum::EnumDiscriminants)]
+#[allow(dead_code)] // Not all of these are used in tests but we want to capture all fields for all events
+pub(crate) enum ExtractProgressEvent {
+    ExtractStarting {
+        archive_size: Option<u64>,
+    },
+
+    ExtractArchivePartRead {
+        bytes: usize,
+    },
+
+    ExtractObjectSkipped {
+        key: String,
+        size: u64,
+    },
+
+    ExtractObjectStarting {
+        key: String,
+        size: u64,
+    },
+    ExtractObjectPartRead {
+        key: String,
+        bytes: usize,
+    },
+    ExtractObjectFinished {
+        key: String,
+        size: u64,
+    },
+
+    ExtractFinished {
+        extracted_objects: usize,
+        extracted_object_bytes: u64,
+        skipped_objects: usize,
+        skipped_object_bytes: u64,
+        total_bytes: u64,
+    },
+
+    ObjectUploadStarting {
+        key: String,
+        size: u64,
+    },
+
+    ObjectPartUploaded {
+        key: String,
+        bytes: usize,
+    },
+
+    ObjectUploaded {
+        key: String,
+        size: u64,
+    },
+
+    ObjectsUploaded {
+        total_objects: usize,
+        total_object_bytes: u64,
+    },
+}
+
+#[derive(Clone)]
+pub(crate) struct TestExtractProgressCallback {
+    events: Arc<Mutex<Vec<ExtractProgressEvent>>>,
+}
+
+impl TestExtractProgressCallback {
+    pub fn new() -> Self {
+        Self {
+            events: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Review all updates after a job has run to successful completion, validating that the
+    /// updates are all sane and match expected invariants.
+    ///
+    /// If the extract job didn't finish successfully then this check should not be applied.
+    pub fn sanity_check_updates(&self) {
+        // There must have been an extract starting event, and if there was an archive size it
+        // should match the total read
+        let archive_size = self.extract_starting();
+
+        if let Some(archive_size) = archive_size {
+            let (_, archive_bytes_read) = self.extract_archive_part_read();
+
+            // The tar format has some kind of footer at the end which apparently doesnt need to be
+            // read
+            assert_eq!(archive_size, archive_bytes_read + 512);
+        }
+
+        // The total archive bytes read at the end of the extraction process should match the sum
+        // of all bytes read during the extraction
+        let (_, archive_part_bytes_read) = self.extract_archive_part_read();
+        let (_, _, _, _, total_archive_bytes_read) = self.extract_finished();
+        assert_eq!(archive_part_bytes_read, total_archive_bytes_read);
+
+        // The number and total size of extracted and skipped objects should match the final number
+        let (objects_skipped, object_bytes_skipped) = self.extract_object_skipped();
+        let (objects_extracted, object_bytes_extracted) = self.extract_object_finished();
+
+        let (total_objects_extracted, total_object_bytes_extracted, total_objects_skipped, total_object_bytes_skipped, _) = self.extract_finished();
+
+        assert_eq!(objects_skipped, total_objects_skipped);
+        assert_eq!(object_bytes_skipped, total_object_bytes_skipped);
+        assert_eq!(objects_extracted, total_objects_extracted);
+        assert_eq!(object_bytes_extracted, total_object_bytes_extracted);
+
+        // The sum of all of the sizes of all object parts should match the total object bytes
+        // extracted
+        let (_, object_part_bytes_read) = self.extract_object_part_read();
+
+        assert_eq!(total_object_bytes_extracted, object_part_bytes_read);
+
+        // The size and count of the object starting and object finished events should match
+        assert_eq!(self.extract_object_starting(), self.extract_object_finished());
+
+        // Since we only extract objects which should be uploaded, the extract starting and
+        // finished totals should exactly match the upload starting and uploaded totals.
+        assert_eq!(self.extract_object_starting(), self.object_upload_starting());
+        assert_eq!(self.extract_object_finished(), self.object_uploaded());
+
+        // The number and size of objects uploaded should match the final message
+        assert_eq!(self.objects_uploaded(), self.object_uploaded());
+
+        // The sum of all object part uploaded byte lengths should match the total amount of object
+        // data uploaded
+        let (_, object_part_bytes_uploaded) = self.object_part_uploaded();
+        let (_, total_object_bytes_uploaded) = self.objects_uploaded();
+        assert_eq!(object_part_bytes_uploaded, total_object_bytes_uploaded);
+    }
+
+    pub fn extract_starting(&self) -> Option<u64> {
+        let event = self
+            .filter_single_event(ExtractProgressEventDiscriminants::ExtractStarting)
+            .unwrap();
+        with_match!(
+            event,
+            ExtractProgressEvent::ExtractStarting { archive_size },
+            { archive_size }
+        )
+    }
+
+    /// The number of extract archive part read events, and the total size of all of them combined
+    pub fn extract_archive_part_read(&self) -> (usize, u64) {
+        let events = self.filter_events(ExtractProgressEventDiscriminants::ExtractArchivePartRead);
+        let count = events.len();
+        let sum = events
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ExtractArchivePartRead { bytes, .. },
+                    { bytes as u64 }
+                )
+            })
+            .sum();
+
+        (count, sum)
+    }
+
+    /// The number of extract object skipped, and the total size of all of them combined
+    pub fn extract_object_skipped(&self) -> (usize, u64) {
+        let events =
+            self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectSkipped);
+        let count = events.len();
+        let sum = events
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ExtractObjectSkipped { size, .. },
+                    { size as u64 }
+                )
+            })
+            .sum();
+
+        (count, sum)
+    }
+
+    /// The number of extract object starting events, and the total size of all of them combined
+    pub fn extract_object_starting(&self) -> (usize, u64) {
+        let events = self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectStarting);
+        let count = events.len();
+        let sum = events
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ExtractObjectStarting { size, .. },
+                    { size }
+                )
+            })
+            .sum();
+
+        (count, sum)
+    }
+
+    /// The number of extract object part read events, and the total size of all of them combined
+    pub fn extract_object_part_read(&self) -> (usize, u64) {
+        let events =
+            self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectPartRead);
+        let count = events.len();
+        let sum = events
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ExtractObjectPartRead { bytes, .. },
+                    { bytes as u64 }
+                )
+            })
+            .sum();
+
+        (count, sum)
+    }
+
+    /// The number of extract object finished events, and the total size of all of them combined
+    pub fn extract_object_finished(&self) -> (usize, u64) {
+        let events =
+            self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectFinished);
+        let count = events.len();
+        let sum = events
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ExtractObjectFinished { size, .. },
+                    { size }
+                )
+            })
+            .sum();
+
+        (count, sum)
+    }
+
+    /// The totals reported in the `extract_finished` event
+    ///
+    /// They are:
+    /// - `expected_objects`
+    /// - `extracted_object_bytes`
+    /// - `skipped_objects`
+    /// - `skipped_object_bytes`
+    /// - `total_bytes`
+    pub fn extract_finished(&self) -> (usize, u64, usize, u64, u64) {
+        let event = self
+            .filter_single_event(ExtractProgressEventDiscriminants::ExtractFinished)
+            .unwrap();
+        with_match!(
+            event,
+            ExtractProgressEvent::ExtractFinished {
+                extracted_objects,
+                extracted_object_bytes,
+                skipped_objects,
+                skipped_object_bytes,
+                total_bytes
+            },
+            {
+                (
+                    extracted_objects,
+                    extracted_object_bytes,
+                    skipped_objects,
+                    skipped_object_bytes,
+                    total_bytes
+                )
+            }
+        )
+    }
+
+    /// The number of object upload starting events, and the total size of all of them combined
+    pub fn object_upload_starting(&self) -> (usize, u64) {
+        let events = self.filter_events(ExtractProgressEventDiscriminants::ObjectUploadStarting);
+        let count = events.len();
+        let sum = events
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ObjectUploadStarting { size, .. },
+                    { size }
+                )
+            })
+            .sum();
+
+        (count, sum)
+    }
+
+    /// The number of object part uploaded events, and the total size of all of them combined
+    pub fn object_part_uploaded(&self) -> (usize, u64) {
+        let events = self.filter_events(ExtractProgressEventDiscriminants::ObjectPartUploaded);
+        let count = events.len();
+        let sum = events
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ObjectPartUploaded { bytes, .. },
+                    { bytes as u64 }
+                )
+            })
+            .sum();
+
+        (count, sum)
+    }
+
+    /// The number of object uploaded events, and the total size of all of them combined
+    pub fn object_uploaded(&self) -> (usize, u64) {
+        let events = self.filter_events(ExtractProgressEventDiscriminants::ObjectUploaded);
+        let count = events.len();
+        let sum = events
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ObjectUploaded { size, .. },
+                    { size }
+                )
+            })
+            .sum();
+
+        (count, sum)
+    }
+
+    /// The number of objects and bytes reported to be uploaded at the end of the upload process
+    pub fn objects_uploaded(&self) -> (usize, u64) {
+        let event = self
+            .filter_single_event(ExtractProgressEventDiscriminants::ObjectsUploaded)
+            .unwrap();
+        with_match!(
+            event,
+            ExtractProgressEvent::ObjectsUploaded {
+                total_objects, total_object_bytes
+            },
+            { (total_objects, total_object_bytes) }
+        )
+    }
+
+    /// Iterate over all events of a certain type
+    pub fn filter_events(
+        &self,
+        typ: ExtractProgressEventDiscriminants,
+    ) -> Vec<ExtractProgressEvent> {
+        let events = self.events.lock().unwrap();
+
+        events
+            .iter()
+            .filter(|event| {
+                let event_typ: ExtractProgressEventDiscriminants = (*event).into();
+
+                event_typ == typ
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    /// Get the single ocurrence of an event, if it can only appear 0 or 1 times.  If it appears
+    /// more than this an assert is fired
+    pub fn filter_single_event(
+        &self,
+        typ: ExtractProgressEventDiscriminants,
+    ) -> Option<ExtractProgressEvent> {
+        let mut events = self.filter_events(typ);
+
+        assert!(
+            events.len() <= 1,
+            "Expected 0 or 1 instances of {:?}, but found {}",
+            typ,
+            events.len()
+        );
+
+        events.pop()
+    }
+
+    fn report_event(&self, event: ExtractProgressEvent) {
+        let mut events = self.events.lock().unwrap();
+
+        events.push(event)
+    }
+}
+
+impl std::fmt::Debug for TestExtractProgressCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Just use the innter `Vec`'s debug repr
+        let events = self.events.lock().unwrap();
+        events.fmt(f)
+    }
+}
+
+impl ExtractProgressCallback for TestExtractProgressCallback {
+    fn extract_starting(&self, archive_size: Option<u64>) {
+        self.report_event(ExtractProgressEvent::ExtractStarting { archive_size });
+    }
+
+    fn extract_archive_part_read(&self, bytes: usize) {
+        self.report_event(ExtractProgressEvent::ExtractArchivePartRead { bytes });
+    }
+
+    fn extract_object_skipped(&self, key: &str, size: u64) {
+        self.report_event(ExtractProgressEvent::ExtractObjectSkipped {
+            key: key.to_string(),
+            size,
+        });
+    }
+
+    fn extract_object_starting(&self, key: &str, size: u64) {
+        self.report_event(ExtractProgressEvent::ExtractObjectStarting {
+            key: key.to_string(),
+            size,
+        });
+    }
+
+    fn extract_object_part_read(&self, key: &str, bytes: usize) {
+        self.report_event(ExtractProgressEvent::ExtractObjectPartRead {
+            key: key.to_string(),
+            bytes,
+        });
+    }
+
+    fn extract_object_finished(&self, key: &str, size: u64) {
+        self.report_event(ExtractProgressEvent::ExtractObjectFinished {
+            key: key.to_string(),
+            size,
+        });
+    }
+
+    fn extract_finished(
+        &self,
+        extracted_objects: usize,
+        extracted_object_bytes: u64,
+        skipped_objects: usize,
+        skipped_object_bytes: u64,
+        total_bytes: u64,
+    ) {
+        self.report_event(ExtractProgressEvent::ExtractFinished {
+            extracted_objects,
+            extracted_object_bytes,
+            skipped_objects,
+            skipped_object_bytes,
+            total_bytes,
+        });
+    }
+
+    fn object_upload_starting(&self, key: &str, size: u64) {
+        self.report_event(ExtractProgressEvent::ObjectUploadStarting {
+            key: key.to_string(),
+            size,
+        });
+    }
+
+    fn object_part_uploaded(&self, key: &str, bytes: usize) {
+        self.report_event(ExtractProgressEvent::ObjectPartUploaded {
+            key: key.to_string(),
+            bytes,
+        });
+    }
+
+    fn object_uploaded(&self, key: &str, size: u64) {
+        self.report_event(ExtractProgressEvent::ObjectUploaded {
+            key: key.to_string(),
+            size,
+        });
+    }
+
+    fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64) {
+        self.report_event(ExtractProgressEvent::ObjectsUploaded {
+            total_objects,
+            total_object_bytes,
+        });
     }
 }

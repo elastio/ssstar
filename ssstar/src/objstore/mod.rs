@@ -121,9 +121,11 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     ///   In the event there is some error with the upload, writes to this writer will fail with a
     ///   BrokenPipe error, in which case callers should await the results receiver to get the
     ///   actual error details.
-    /// - Status receiver, which receives multiple messages reporting the total number of bytes
-    ///   uploaded to object storage so far.  Callers who don't care about progress reporting can
-    ///   drop this.
+    /// - Status receiver, which receives multiple messages reporting the number of bytes uploaded
+    ///   to object storage with each upload operation.  To calculate the total number of bytes
+    ///   uploaded, receivers of this data must maintain a running total; this receiver yields just
+    ///   the amount of bytes uploaded after each upload operation completes.  Callers who don't care
+    ///   about progress reporting can drop this.
     /// - Results reciever, which will receive the result of the async task that processes all of
     ///   the writes sent to the [`DuplexStream`].  Callers should await this receiver, which will
     ///   complete only when the data written to the `DuplexStream` have all been uploaded
@@ -134,7 +136,7 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
         size_hint: Option<u64>,
     ) -> Result<(
         DuplexStream,
-        mpsc::UnboundedReceiver<u64>,
+        mpsc::UnboundedReceiver<usize>,
         oneshot::Receiver<Result<u64>>,
     )>;
 }

@@ -40,7 +40,7 @@ pub enum S3TarError {
         source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::HeadObjectError>,
     },
 
-    #[snafu(display("Object '{key}' in S3 bucket '{bucket}' doesn't exist.  If you meant to specify a prefix, add a `/` character at the end of the URL"))]
+    #[snafu(display("Object '{key}' in S3 bucket '{bucket}' doesn't exist"))]
     ObjectNotFound { bucket: String, key: String },
 
     #[snafu(display("No objects in the prefix '{prefix}' in S3 bucket '{bucket}' were found.  If you meant to specify a object and not a prefix, remove the `/` character from the end of the URL.  If you want to match all objects in this prefix recursively, use a glob expression like '{prefix}/**.*'"))]

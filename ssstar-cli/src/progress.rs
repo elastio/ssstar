@@ -273,8 +273,8 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
         // Nothing to report
     }
 
-    fn tar_archive_bytes_written(&self, bytes_written: u64) {
-        self.total_bytes_written_to_archive.inc(bytes_written);
+    fn tar_archive_bytes_written(&self, bytes_written: usize) {
+        self.total_bytes_written_to_archive.inc(bytes_written as u64);
         self.total_bytes_written_to_archive.set_message("Writing")
     }
 
@@ -285,8 +285,8 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
             .finish_with_message("Archive writes completed");
     }
 
-    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: u64) {
-        self.archive_bytes_uploaded.inc(bytes_uploaded);
+    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: usize) {
+        self.archive_bytes_uploaded.inc(bytes_uploaded as u64);
         self.archive_bytes_uploaded
             .set_message("Upload in progress");
     }

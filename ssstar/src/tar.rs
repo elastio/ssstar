@@ -1,5 +1,6 @@
-use crate::create;
+//! Types that help with reading from and writing to tar archives
 use crate::Result;
+use crate::{create, extract};
 use futures::FutureExt;
 use snafu::{IntoError, ResultExt};
 use std::io::Write;
@@ -183,7 +184,7 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
 }
 
 /// A wrapper around an arbitrary [`std::io::Write`] which counts how many bytes are written to the
-/// underlying writer and reports them to the [`create::ProgressCallback`] callback method
+/// underlying writer and reports them to the [`crate::CreateProgressCallback`] callback method
 pub(crate) struct CountingWriter<W: std::io::Write + Send + 'static> {
     inner: W,
     progress: Arc<dyn create::CreateProgressCallback>,
@@ -204,14 +205,47 @@ impl<W: std::io::Write + Send + 'static> std::io::Write for CountingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let bytes_written = self.inner.write(buf)?;
 
+        self.progress.tar_archive_bytes_written(bytes_written);
         self.total_bytes_written += bytes_written as u64;
-        self.progress
-            .tar_archive_bytes_written(bytes_written as u64);
 
         Ok(bytes_written)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
+    }
+}
+
+/// A wrapper around an arbitrary [`std::io::Read`] which counts how many bytes are written to the
+/// underlying reader and reports them to the [`create::ExtractProgressCallback`] callback method
+pub(crate) struct CountingReader<R: std::io::Read + Send + 'static> {
+    inner: R,
+    progress: Arc<dyn extract::ExtractProgressCallback>,
+    total_bytes_read: u64,
+}
+
+impl<R: std::io::Read + Send + 'static> CountingReader<R> {
+    pub(crate) fn new(reader: R, progress: Arc<dyn extract::ExtractProgressCallback>) -> Self {
+        Self {
+            inner: reader,
+            progress,
+            total_bytes_read: 0,
+        }
+    }
+
+    pub fn total_bytes_read(&self) -> u64 {
+        self.total_bytes_read
+    }
+}
+
+impl<R: std::io::Read + Send + 'static> std::io::Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let bytes_read = self.inner.read(buf)?;
+
+        self.progress.extract_archive_part_read(bytes_read);
+
+        self.total_bytes_read += bytes_read as u64;
+
+        Ok(bytes_read)
     }
 }

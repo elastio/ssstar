@@ -1,5 +1,41 @@
 //! Implementation of the operation which creates a tar archive from inputs stored in object
 //! storage.
+//!
+//! Creation starts with creating a [`CreateArchiveJobBuilder`], then adding one or more inputs
+//! with [`CreateArchiveJobBuilder::add_input`].  When [`CreateArchiveJobBuilder::build`] is
+//! called, those inputs are evaluated against object store APIs and a complete list of objects to
+//! archive is constructed in memory, and returned as part of [`CreateArchiveJob`].  The actual
+//! creation of the archive is performed by calling [`CreateArchiveJob::run`].
+//!
+//! Archive creation is done in parallel to the extent possible.  All input objects are sorted by
+//! timestamp, oldest to newest, and objects larger than the multipart threshold are broken up into
+//! multiple parts equal to multipart chunk size.  The result is a list of either entire objects
+//! (smaller than multipart threshold), or multiple object parts (if object is larger than
+//! multipart threshold), then these are processed in parallel up to the max requests config
+//! parameter.
+//!
+//! As these pieces are downloaded, they are fed to the archive writing stage (but they are fed in
+//! the order in which they appear in the object, no in the order in which they download, which can
+//! be in any random order depending on network conditions and non-deterministic scheduling of
+//! tasks).
+//!
+//! The writing stage writes this data to the tar archive using the `tar` crate.  However the `tar`
+//! crate works only with blocking I/O, so this stage runs as a tokio blocking task.
+//!
+//! The `tar` crate writes to a [`std::io::Write`] impl, which in turn translates those writes to
+//! an async write on a tokio `DuplexStream`.  Another async task reads from that `DuplexStream`,
+//! buffers the writes to fit into the multiplart chunk size for the target object storage, and
+//! uploads the chunks as they are formed by the `tar` crate's writes.  These uploads are performed
+//! in parallel up to the maximum request count, if the tar archive is to be written directly to
+//! object storage.
+//!
+//! The archive can also be written to a file on disk or an arbitrary [`tokio::io::AsyncWrite`]
+//! impl; in which case the process works as described other than the final stage that translates
+//! `tar`'s writes into chunks for upload; for the other writes the writes are passed directly from
+//! `tar` to the corresponding async writer.
+//!
+//! Throughout all of this, progress is reported to the caller via a caller-provided
+//! [`CreateProgressCallback`] trait implementation.
 use crate::objstore::{Bucket, ObjectStorageFactory};
 use crate::tar::TarBuilderWrapper;
 use crate::{Config, Result};
@@ -499,7 +535,7 @@ pub trait CreateProgressCallback: Sync + Send {
     ///
     /// This event can be reported from a synchronous context, because it's captured at the level
     /// of the [`std::io::Write`] implementation itself.
-    fn tar_archive_bytes_written(&self, bytes_written: u64) {}
+    fn tar_archive_bytes_written(&self, bytes_written: usize) {}
 
     /// The tar archive has been completed, and will see no further writes.
     ///
@@ -513,7 +549,7 @@ pub trait CreateProgressCallback: Sync + Send {
     /// The receiver of this event will need to maintain a running total if one is desired.
     ///
     /// If the tar archive is not being directed to object storage, then this event will never fire
-    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: u64) {}
+    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: usize) {}
 
     /// The tar archive's previously completed writes have all been flushed from their buffers and
     /// uploaded to object storage (or a file or a stream dependng on where the tar archive is
