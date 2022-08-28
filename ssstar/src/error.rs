@@ -126,17 +126,45 @@ pub enum S3TarError {
         source: glob::PatternError,
     },
 
+    #[snafu(display("The filter '{filter}' is not valid.  Filters cannot be empty strings, and they cannot start with '/'"))]
+    InvalidFilter { filter: String },
+
+    #[snafu(display("The archive URL '{url}' is missing the key name"))]
+    ArchiveUrlInvalid { url: Url },
+
+    #[snafu(display("Error opening source archive file '{}", path.display()))]
+    OpeningArchiveFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
     #[snafu(display("Error writing target archive file '{}", path.display()))]
     WritingArchiveFile {
         path: PathBuf,
         source: std::io::Error,
     },
 
+    /// Some error while extracting the tar archive
+    #[snafu(display("Error reading from tar archive"))]
+    TarRead { source: std::io::Error },
+
+    #[snafu(display("BUG: it looks like the background task writing an extracted object to object storage has panicked.  Check log output for more details"))]
+    AsyncObjectWriterPanic,
+
     #[snafu(display("BUG: it looks like the background task writing the tar archive to object storage has panicked.  Check log output for more details"))]
     AsyncTarWriterPanic,
 
+    #[snafu(display("Receiver dropped; assuming tar extract is aborted"))]
+    TarExtractAborted,
+
     #[snafu(display("Error appending entry to tar archive"))]
     TarAppendData { source: std::io::Error },
+
+    #[snafu(display("Error writing data to the object store uploader task"))]
+    UploadWriterError { source: std::io::Error },
+
+    #[snafu(display("A spawned async task task panicked or was canceled"))]
+    Spawn{ source: tokio::task::JoinError },
 
     #[snafu(display("A blocking task panicked or was canceled"))]
     SpawnBlocking { source: tokio::task::JoinError },

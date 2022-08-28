@@ -20,6 +20,15 @@ mod s3;
 /// of increasing the ref count on an `Arc`
 #[async_trait::async_trait]
 pub(crate) trait ObjectStorage: DynClone + std::fmt::Debug + Sync + Send + 'static {
+    /// Given a URL that contains a bucket and might also contain an object key and version ID,
+    /// extract all of those components.
+    ///
+    /// Fails if the URL is not valid for this object storage technology.  Also fails if the
+    /// specified bucket doesn't exist.  Does not verify that the object key or version ID exist.
+    ///
+    /// Result of a tuple of `(bucket, key, version_id)`
+    async fn parse_url(&self, url: &Url) -> Result<(Box<dyn Bucket>, Option<String>, Option<String>)>;
+
     /// Given a URL that contains a bucket (and possibly an object key or glob also), extract the
     /// bucket name, validate it against the underlying object storage system, and if it's valid
     /// then return the bucket name to the caller
@@ -45,6 +54,9 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     fn objstore(&self) -> Box<dyn ObjectStorage>;
 
     fn name(&self) -> &str;
+
+    /// Query the size of the specified object
+    async fn get_object_size(&self, key: String, version_id: Option<String>) -> Result<u64>;
 
     /// List all objects in this bucket that match the specified selector
     ///
@@ -82,6 +94,13 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
         version_id: Option<String>,
         byte_range: Range<u64>,
     ) -> Result<mpsc::Receiver<Result<bytes::Bytes>>>;
+
+    /// Upload a small object to object storage directly without any multi-part chunking or fancy
+    /// asynchrony.
+    ///
+    /// This should only be used for objects under the multpart threshold in size.  For anything
+    /// bigger, use the more complex [`Self::create_object_writer`].
+    async fn put_small_object(&self, key: String, data: bytes::Bytes) -> Result<()>;
 
     /// Construct an [`DuplexStream`] implementation that will upload all written data to the object
     /// identified as `key`.

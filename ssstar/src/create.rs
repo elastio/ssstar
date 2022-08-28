@@ -90,52 +90,54 @@ impl Display for CreateArchiveInput {
 }
 
 impl CreateArchiveInput {
-    /// Given the already-parsed bucket component of an input URL, and the path part, determine
+    /// Given the already-parsed bucket and key components of an input URL, determine
     /// what kind of input selector this is and return the corresponding value.
     ///
-    /// The "path" here is everything after the `s3://bucket/` part of the URL.  It could be empty
+    /// The "key" here is everything after the `s3://bucket/` part of the URL.  It could be empty
     /// or contain a prefix or object name or glob.
-    fn parse_path(bucket: Box<dyn Bucket>, path: &str) -> Result<Self> {
-        if path.is_empty() || path == "/" {
-            // There's nothing here just a bucket
-            Ok(Self {
-                bucket,
-                selector: ObjectSelector::Bucket,
-            })
-        } else if path.contains('*')
-            || path.contains('?')
-            || path.contains('[')
-            || path.contains(']')
-        {
-            // It looks like there's a glob here.  The actual parsing of the glob needs to be done
-            // by the object store impl itself though
-            Ok(Self {
-                bucket,
-                selector: ObjectSelector::Glob {
-                    pattern: path.to_string(),
-                },
-            })
-        } else if path.ends_with('/') {
-            // Looks like a prefix
-            Ok(Self {
-                bucket,
-                selector: ObjectSelector::Prefix {
-                    prefix: path.to_string(),
-                },
-            })
-        } else {
-            // The only remaining possibility is that it's a single object key
-            Ok(Self {
-                bucket,
+    fn parse_key(bucket: Box<dyn Bucket>, key: Option<String>) -> Result<Self> {
+        match key {
+            None => {
+                // There's nothing here just a bucket
+                Ok(Self {
+                    bucket,
+                    selector: ObjectSelector::Bucket,
+                })
+            }
+            Some(key) => {
+                if key.contains('*') || key.contains('?') || key.contains('[') || key.contains(']')
+                {
+                    // It looks like there's a glob here.  The actual parsing of the glob needs to be done
+                    // by the object store impl itself though
+                    Ok(Self {
+                        bucket,
+                        selector: ObjectSelector::Glob {
+                            pattern: key.to_string(),
+                        },
+                    })
+                } else if key.ends_with('/') {
+                    // Looks like a prefix
+                    Ok(Self {
+                        bucket,
+                        selector: ObjectSelector::Prefix {
+                            prefix: key.to_string(),
+                        },
+                    })
+                } else {
+                    // The only remaining possibility is that it's a single object key
+                    Ok(Self {
+                        bucket,
 
-                selector: ObjectSelector::Object {
-                    key: path.to_string(),
+                        selector: ObjectSelector::Object {
+                            key: key.to_string(),
 
-                    // For now this will always be None.
-                    // TODO: How can the version ID be specified in the S3 URL?
-                    version_id: None,
-                },
-            })
+                            // For now this will always be None.
+                            // TODO: How can the version ID be specified in the S3 URL?
+                            version_id: None,
+                        },
+                    })
+                }
+            }
         }
     }
 
@@ -299,11 +301,11 @@ impl CreateArchiveJobBuilder {
         let objstore = self.objstore_factory.from_url(input).await?;
 
         // Validate the bucket and extract it from the URL
-        let bucket = objstore.extract_bucket_from_url(input).await?;
+        let (bucket, key, version_id) = objstore.parse_url(&input).await?;
         debug!(url = %input, ?bucket, "Confirmed bucket access for input");
 
         // Parse the path component of the URL into an archive input
-        let input = CreateArchiveInput::parse_path(bucket, input.path())?;
+        let input = CreateArchiveInput::parse_key(bucket, key)?;
 
         debug!(?input, "Adding archive input to job");
 
@@ -597,13 +599,17 @@ impl CreateArchiveJob {
             Option<oneshot::Receiver<Result<u64>>>,
         ) = match self.target {
             TargetArchive::ObjectStorage(url) => {
-                // Validate the URL and get a Bucket object in the bargain
+                // Validate the URL and get the components of the URL in the bargain
                 let objstore = self.objstore_factory.from_url(&url).await?;
-                let bucket = objstore.extract_bucket_from_url(&url).await?;
+
+                let (bucket, key, _) = objstore.parse_url(&url).await?;
+
+                // The key is a required component here
+                let key = key.ok_or_else(|| crate::error::ArchiveUrlInvalidSnafu { url: url.clone() }.build())?;
 
                 // Create a writer that will upload all written data to this object
                 let (bytes_writer, mut progress_receiver, result_receiver) = bucket
-                    .create_object_writer(url.path().to_string(), Some(approx_archive_size))
+                    .create_object_writer(key, Some(approx_archive_size))
                     .await?;
 
                 // Make a background task that will pull updates from the process stream and post
@@ -768,7 +774,7 @@ impl CreateArchiveJob {
                     // But we only have the first part, how can we write to tar now?  Don't we need
                     // to buffer in memory until the whole object is read?
                     //
-                    // NO! `append_data` takes a `Read` instance which it will use to read the data
+                    // NO! `tar::Builder::append_data` takes a `Read` instance which it will use to read the data
                     // before writing it to the tar stream.  Here we'll construct just such a
                     // `Read` impl, which is fed by a tokio channel receiver.  The other end of
                     // that receiver is held by us, polling the `parts_stream` and feeding each of

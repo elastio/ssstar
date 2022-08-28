@@ -1,5 +1,5 @@
 use clap::{ArgGroup, Parser, Subcommand};
-use ssstar::{CreateArchiveJobBuilder, TargetArchive};
+use ssstar::{CreateArchiveJobBuilder, ExtractArchiveJobBuilder, SourceArchive, TargetArchive};
 use std::path::PathBuf;
 use tracing::debug;
 use url::Url;
@@ -138,6 +138,38 @@ enum Command {
         /// created.
         #[clap(value_parser, value_name = "URL")]
         target: Url,
+
+        /// Strip this many path components (separated by `/`) from objects in archive prior to
+        /// extracting.
+        ///
+        /// For example if this value is 2, and the archive contains an object `foo/bar/baz/boo`,
+        /// then the resulting target URL for that object will be the concatenation of `target` and
+        /// `baz/boo`; the first two path components `foo` and `bar` are stripped.
+        #[clap(long)]
+        strip_components: Option<usize>,
+
+        /// Optional filters to limit the objects extracted from the archive.
+        ///
+        /// These can be exact object names, prefixes, or globs.  Filters are evaluated with an OR
+        /// operator, so an object is extracted if it matches any one of the filters specified.  If
+        /// no filters are specified, the entire contents of the archive are restored.
+        ///
+        /// EXAMPLES:
+        ///
+        /// `foo` - Extract the object called `foo` at the root level, no prefix
+        ///
+        /// `bar/baz` - Extract the object `bar/baz`
+        ///
+        /// `bar/` - Extract all objects that have a prefix `bar/` (and possibly additional
+        /// prefixes following `bar/`)
+        ///
+        /// `**` - Extract everything in the archive.  This is the default so no need to specify
+        /// explicitly.
+        ///
+        /// `bar/**/*.txt` - Extract everything under the `bar/` prefix, recursively, with names
+        /// that end in `.txt`.
+        #[clap(value_name = "FILTER_EXPR")]
+        filters: Vec<String>,
     },
 }
 
@@ -186,12 +218,41 @@ impl Command {
                 Ok(())
             }
             Self::Extract {
-                file: _,
-                s3: _,
-                stdin: _,
-                target: _,
+                file,
+                s3,
+                stdin,
+                target,
+                strip_components,
+                filters,
             } => {
-                todo!()
+                let source = if let Some(path) = file {
+                    SourceArchive::File(path)
+                } else if let Some(url) = s3 {
+                    SourceArchive::ObjectStorage(url)
+                } else if stdin {
+                    SourceArchive::Reader(Box::new(std::io::stdin()))
+                } else {
+                    unreachable!(
+                        "BUG: clap should require the user to specify exactly one of these options"
+                    );
+                };
+
+                let mut builder =
+                    ExtractArchiveJobBuilder::new(globals.config.clone(), source, target).await?;
+
+                for filter in filters {
+                    builder.add_filter(filter)?;
+                }
+
+                let job =
+                    progress::with_spinner(&globals, "Checking source archive...", async move {
+                        builder.build().await
+                    })
+                    .await?;
+
+                job.run_without_progress(futures::future::pending()).await?;
+
+                Ok(())
             }
         }
     }

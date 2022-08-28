@@ -37,6 +37,23 @@ impl S3 {
 
 #[async_trait::async_trait]
 impl ObjectStorage for S3 {
+    async fn parse_url(
+        &self,
+        url: &Url,
+    ) -> Result<(Box<dyn Bucket>, Option<String>, Option<String>)> {
+        let bucket = self.extract_bucket_from_url(url).await?;
+
+        let key = S3Bucket::url_path_to_s3_path(url.path());
+
+        // TODO: is there a standard way to represent an S3 object key plus version ID as a
+        // `s3://...` URL?  If not then the version_id tuple element should be removed.
+        if key.is_empty() {
+            Ok((bucket, None, None))
+        } else {
+            Ok((bucket, Some(key.to_string()), None))
+        }
+    }
+
     async fn extract_bucket_from_url(&self, url: &Url) -> Result<Box<dyn Bucket>> {
         // S3 URLs are of the form:
         // s3://bucket/path
@@ -386,7 +403,7 @@ impl S3Bucket {
         progress_sender: mpsc::UnboundedSender<u64>,
     ) -> Result<u64> {
         // It seems a bit clumsy to do this single chunk upload in an async background task instead
-        // of just doing it directly in this method, but the same code in `create` and `extract`
+        // of just doing it directly in this method, but the same code in `create`
         // needs to work with both small objects that aren't big enough to qualify for multi-part,
         // and larger objects that do need it.  So we get to do this trival upload in a round-about
         // way
@@ -401,18 +418,7 @@ impl S3Bucket {
 
         debug!(total_bytes, "Uploading unipart object");
 
-        self.inner
-            .client
-            .put_object()
-            .bucket(self.inner.name.clone())
-            .key(key.clone())
-            .body(aws_sdk_s3::types::ByteStream::from(bytes))
-            .send()
-            .await
-            .with_context(|_| crate::error::PutObjectSnafu {
-                bucket: self.inner.name.clone(),
-                key: key.clone(),
-            })?;
+        self.put_small_object(key, bytes).await?;
 
         let _ = progress_sender.send(total_bytes);
 
@@ -471,6 +477,48 @@ impl S3Bucket {
             next_offset: 0,
         }
         .fuse()
+    }
+
+    /// Perform a `HeadObject` operation, failing with an appropraite error if the object doesn't
+    /// exist
+    async fn head_object(
+        &self,
+        key: String,
+        version_id: Option<String>,
+    ) -> Result<aws_sdk_s3::output::HeadObjectOutput> {
+        self.inner
+            .client
+            .head_object()
+            .bucket(&self.inner.name)
+            .key(&key)
+            .set_version_id(version_id)
+            .send()
+            .await
+            .map_err(|err| {
+                // If the error here is that the object is not found, throw that specific
+                // error as it provides more meaningful context then the generic
+                // `HeadObjectSnafu` error
+                if let aws_sdk_s3::types::SdkError::ServiceError {
+                    err: service_err, ..
+                } = &err
+                {
+                    if service_err.is_not_found() {
+                        return crate::error::ObjectNotFoundSnafu {
+                            bucket: self.inner.name.clone(),
+                            key: key.to_string(),
+                        }
+                        .into_error(snafu::NoneError);
+                    }
+                }
+
+                // A non-service error, or a service error that isn't not found, should be
+                // reported as a generic HeadObject error
+                return crate::error::HeadObjectSnafu {
+                    bucket: self.inner.name.clone(),
+                    key: key.to_string(),
+                }
+                .into_error(err);
+            })
     }
 
     /// Perform a HEAD on the bucket to check access.
@@ -541,6 +589,13 @@ impl Bucket for S3Bucket {
         &self.inner.name
     }
 
+    async fn get_object_size(&self, key: String, version_id: Option<String>) -> Result<u64> {
+        // In S3 this is done with the HeadObject operation
+        let metadata = self.head_object(key, version_id).await?;
+
+        Ok(metadata.content_length() as u64)
+    }
+
     async fn list_matching_objects(
         &self,
         selector: create::ObjectSelector,
@@ -557,44 +612,7 @@ impl Bucket for S3Bucket {
 
                 debug!(key, bucket = %self.inner.name, "Archive input matches a single S3 object");
 
-                let result = self
-                    .inner
-                    .client
-                    .head_object()
-                    .bucket(&self.inner.name)
-                    .key(key)
-                    .set_version_id(version_id)
-                    .send()
-                    .await;
-
-                let metadata = match result {
-                    Err(err) => {
-                        // If the error here is that the object is not found, throw that specific
-                        // error as it provides more meaningful context then the generic
-                        // `HeadObjectSnafu` error
-                        if let SdkError::ServiceError {
-                            err: service_err, ..
-                        } = &err
-                        {
-                            if service_err.is_not_found() {
-                                return Err(crate::error::ObjectNotFoundSnafu {
-                                    bucket: self.inner.name.clone(),
-                                    key: key.to_string(),
-                                }
-                                .into_error(snafu::NoneError));
-                            }
-                        }
-
-                        // A non-service error, or a service error that isn't not found, should be
-                        // reported as a generic HeadObject error
-                        return Err(crate::error::HeadObjectSnafu {
-                            bucket: self.inner.name.clone(),
-                            key: key.to_string(),
-                        }
-                        .into_error(err));
-                    }
-                    Ok(metadata) => metadata,
-                };
+                let metadata = self.head_object(key.to_string(), version_id).await?;
 
                 Ok(vec![create::InputObject {
                     bucket: dyn_clone::clone_box(self),
@@ -907,6 +925,26 @@ impl Bucket for S3Bucket {
         });
 
         Ok(receiver)
+    }
+
+    #[instrument(skip(self, data), fields(len = data.len()))]
+    async fn put_small_object(&self, key: String, data: bytes::Bytes) -> Result<()> {
+        let key = Self::url_path_to_s3_path(&key).to_string();
+
+        self.inner
+            .client
+            .put_object()
+            .bucket(self.inner.name.clone())
+            .key(key.clone())
+            .body(aws_sdk_s3::types::ByteStream::from(data))
+            .send()
+            .await
+            .with_context(|_| crate::error::PutObjectSnafu {
+                bucket: self.inner.name.clone(),
+                key: key.clone(),
+            })?;
+
+        Ok(())
     }
 
     #[instrument(skip(self))]
