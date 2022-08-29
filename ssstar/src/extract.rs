@@ -38,20 +38,13 @@ use crate::objstore::{Bucket, ObjectStorageFactory};
 use crate::tar::CountingReader;
 use crate::{Config, Result};
 use bytes::{Bytes, BytesMut};
-use futures::StreamExt;
-use itertools::Itertools;
 use snafu::prelude::*;
-use std::fmt::Display;
 use std::future::Future;
 use std::io::Read;
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::{mpsc, oneshot},
-};
+use tokio::{io::AsyncWriteExt, sync::mpsc};
 use tracing::{debug, debug_span, error, info, info_span, instrument, trace, Instrument};
 use url::Url;
 
@@ -194,7 +187,7 @@ impl SourceArchiveInternal {
                     ),
                 ))
             }
-            SourceArchiveInternal::File { path, metadata } => {
+            SourceArchiveInternal::File { path, metadata: _ } => {
                 // Open the file with the blocking `File::open` which needs to be done in a
                 // blocking thread
                 let file = tokio::task::spawn_blocking(move || {

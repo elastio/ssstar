@@ -286,7 +286,7 @@ where
         .map(|key| key.to_string())
         .collect::<HashSet<_>>();
 
-    for (key, object) in objects {
+    for (key, _object) in objects {
         // In the test data hashmap, keys are identified without whatever prefix was used when
         // extracting, so use that form here
         let relative_key = key.strip_prefix(prefix).unwrap();

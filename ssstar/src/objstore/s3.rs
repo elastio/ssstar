@@ -603,7 +603,7 @@ impl Bucket for S3Bucket {
     ) -> Result<Vec<create::InputObject>> {
         // Helpfully, the AWS Rust SDK provides conversions from their own internal DateTime type
         // to Chrono.
-        use aws_sdk_s3::types::SdkError;
+
         use aws_smithy_types_convert::date_time::DateTimeExt;
 
         match selector {

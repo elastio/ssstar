@@ -337,7 +337,7 @@ impl CreateArchiveJobBuilder {
         let objstore = self.objstore_factory.from_url(input).await?;
 
         // Validate the bucket and extract it from the URL
-        let (bucket, key, version_id) = objstore.parse_url(&input).await?;
+        let (bucket, key, _version_id) = objstore.parse_url(&input).await?;
         debug!(url = %input, ?bucket, "Confirmed bucket access for input");
 
         // Parse the path component of the URL into an archive input
