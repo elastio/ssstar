@@ -43,6 +43,17 @@ pub(crate) async fn run_create_job(
     job.run(futures::future::pending(), progress).await
 }
 
+/// Run the specified archive extraction job, with progress bars for extra pretty-ness
+pub(crate) async fn run_extract_job(
+    globals: &super::Globals,
+    job: ssstar::ExtractArchiveJob,
+) -> Result<()> {
+    let progress = ExtractProgressReport::new(hide_progress(globals), &job);
+
+    // TODO: implement abort functionality
+    job.run(futures::future::pending(), progress).await
+}
+
 /// Progress should be hidden for either of verbose mode (because there will be a flurry of log
 /// messages and the progress bar rendering will be all messed up), or quiet mode (because
 /// progress bars are not quiet).
@@ -274,7 +285,8 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
     }
 
     fn tar_archive_bytes_written(&self, bytes_written: usize) {
-        self.total_bytes_written_to_archive.inc(bytes_written as u64);
+        self.total_bytes_written_to_archive
+            .inc(bytes_written as u64);
         self.total_bytes_written_to_archive.set_message("Writing")
     }
 
@@ -294,5 +306,177 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
     fn tar_archive_upload_completed(&self, size: u64) {
         self.archive_bytes_uploaded
             .finish_with_message("Archive upload completed");
+    }
+}
+
+/// Progress reporting for the extract operation, which receives progress updates from the lib crate
+/// and renders progress bars accordingly
+///
+/// The extract operation renders several progress bars, probaly more than anyone but the developer
+/// of the code is interested in.
+#[derive(Clone)]
+struct ExtractProgressReport {
+    /// Aggregate which groups all of the below progress bars together
+    #[allow(dead_code)] // Unused but needs to stay in scope
+    multi: indicatif::MultiProgress,
+
+    /// The raw bytes read from the underlying tar archive
+    raw_bytes_read: indicatif::ProgressBar,
+
+    /// The progress extracting the object currently being extracted
+    extract_object: indicatif::ProgressBar,
+
+    /// The progress uploading the object currently being uploaded.
+    /// Might or might not be the object being extracted, depends on the queue depth and whether
+    /// the last extracted object has finished uploading
+    upload_object: indicatif::ProgressBar,
+}
+
+impl ExtractProgressReport {
+    fn new(hide_progress: bool, job: &ssstar::ExtractArchiveJob) -> Self {
+        fn standard_style() -> indicatif::ProgressStyle {
+            indicatif::ProgressStyle::with_template("{spinner:.green} {prefix}: {msg:<45!} [{bar:20.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
+        .unwrap()
+        .progress_chars("#>-")
+        }
+
+        /// The template syntax for right alignment seems not to work as I expected, and it does
+        /// not pad the prefix string to the left with spaces.  So we have to do that ourselves
+        fn pad_prefix(prefix: &'static str) -> String {
+            const PREFIX_MAX_LEN: usize = 25;
+
+            assert!(
+                prefix.len() <= PREFIX_MAX_LEN,
+                "Prefix '{prefix}' is too long"
+            );
+
+            format!("{prefix:>25}")
+        }
+
+        let multi = if !hide_progress {
+            indicatif::MultiProgress::new()
+        } else {
+            indicatif::MultiProgress::with_draw_target(indicatif::ProgressDrawTarget::hidden())
+        };
+
+        let archive_size = job.archive_size();
+
+        let raw_bytes_read = multi.add(indicatif::ProgressBar::new(
+            archive_size.unwrap_or_default(),
+        ));
+        raw_bytes_read.set_prefix(pad_prefix("Read from tar"));
+        raw_bytes_read.set_style(standard_style());
+
+        let extract_object = multi.add(indicatif::ProgressBar::new(0));
+        extract_object.set_style(standard_style());
+        extract_object.set_prefix(pad_prefix("Extract file from tar"));
+
+        let upload_object = multi.add(indicatif::ProgressBar::new(0));
+        upload_object.set_style(standard_style());
+        upload_object.set_prefix(pad_prefix("Upload object to S3"));
+
+        Self {
+            multi,
+            raw_bytes_read,
+            extract_object,
+            upload_object,
+        }
+    }
+}
+
+#[allow(unused_variables)] // so we can keep the unused progress methods with their comments
+impl ssstar::ExtractProgressCallback for ExtractProgressReport {
+    fn extract_starting(&self, archive_size: Option<u64>) {
+        // Bar should already be set with the right length but just in case
+        self.raw_bytes_read
+            .set_length(archive_size.unwrap_or_default());
+        self.raw_bytes_read.set_message("Extracting files");
+    }
+
+    fn extract_archive_part_read(&self, bytes: usize) {
+        self.raw_bytes_read.inc(bytes as u64);
+    }
+
+    fn extract_object_skipped(&self, key: &str, size: u64) {
+        self.extract_object.set_length(size);
+        self.extract_object.set_position(size);
+        self.extract_object.set_message(format!("Skipped '{key}'"));
+    }
+
+    fn extract_object_starting(&self, key: &str, size: u64) {
+        self.extract_object.set_position(0);
+        self.extract_object.set_length(size);
+        self.extract_object.set_message(format!("{key}"));
+    }
+
+    fn extract_object_part_read(&self, key: &str, bytes: usize) {
+        self.extract_object.inc(bytes as u64);
+    }
+
+    fn extract_object_finished(&self, key: &str, size: u64) {
+        self.extract_object.set_position(size);
+    }
+
+    fn extract_finished(
+        &self,
+        extracted_objects: usize,
+        extracted_object_bytes: u64,
+        skipped_objects: usize,
+        skipped_object_bytes: u64,
+        total_bytes: u64,
+    ) {
+        let extracted_objects = indicatif::HumanCount(extracted_objects as u64);
+        let extracted_object_bytes = indicatif::BinaryBytes(extracted_object_bytes);
+        let skipped_objects = indicatif::HumanCount(skipped_objects as u64);
+        let skipped_object_bytes = indicatif::BinaryBytes(skipped_object_bytes);
+        let total_bytes = indicatif::BinaryBytes(total_bytes);
+
+        self.multi.println(
+            format!("Extraction complete!  Read {total_bytes} from archive, extracted {extracted_objects} objects ({extracted_object_bytes})")).unwrap();
+        if skipped_objects.0 > 0 {
+            self.multi
+                .println(format!(
+                    "Skipped {skipped_objects} objects ({skipped_object_bytes})"
+                ))
+                .unwrap();
+        }
+
+        self.raw_bytes_read.set_length(total_bytes.0);
+        self.raw_bytes_read.set_position(total_bytes.0);
+        self.raw_bytes_read
+            .finish_with_message(format!("Extraction complete ({total_bytes} read)"));
+
+        self.extract_object.set_length(extracted_object_bytes.0);
+        self.extract_object.set_position(extracted_object_bytes.0);
+        self.extract_object
+            .finish_with_message("Extraction complete ({extracted_objects} extracted)");
+    }
+
+    fn object_upload_starting(&self, key: &str, size: u64) {
+        self.upload_object.set_position(0);
+        self.upload_object.set_length(size);
+        self.upload_object.set_message(format!("{key}"));
+    }
+
+    fn object_part_uploaded(&self, key: &str, bytes: usize) {
+        self.upload_object.inc(bytes as u64);
+    }
+
+    fn object_uploaded(&self, key: &str, size: u64) {
+        self.upload_object.set_position(size);
+    }
+
+    fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64) {
+        let total_objects = indicatif::HumanCount(total_objects as u64);
+        let total_object_bytes = indicatif::BinaryBytes(total_object_bytes);
+        self.upload_object.set_length(total_object_bytes.0);
+        self.upload_object.set_position(total_object_bytes.0);
+        self.multi
+            .println(format!(
+                "Upload complete!  Uploaded {total_objects} objects ({total_object_bytes})"
+            ))
+            .unwrap();
+        self.upload_object
+            .finish_with_message(format!("Upload complete ({total_object_bytes})"))
     }
 }

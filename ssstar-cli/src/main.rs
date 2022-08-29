@@ -145,8 +145,8 @@ enum Command {
         /// For example if this value is 2, and the archive contains an object `foo/bar/baz/boo`,
         /// then the resulting target URL for that object will be the concatenation of `target` and
         /// `baz/boo`; the first two path components `foo` and `bar` are stripped.
-        #[clap(long)]
-        strip_components: Option<usize>,
+        //#[clap(long)]
+        //strip_components: Option<usize>,
 
         /// Optional filters to limit the objects extracted from the archive.
         ///
@@ -222,7 +222,7 @@ impl Command {
                 s3,
                 stdin,
                 target,
-                strip_components,
+                //strip_components,
                 filters,
             } => {
                 let source = if let Some(path) = file {
@@ -250,7 +250,7 @@ impl Command {
                     })
                     .await?;
 
-                job.run_without_progress(futures::future::pending()).await?;
+                progress::run_extract_job(&globals, job).await?;
 
                 Ok(())
             }
