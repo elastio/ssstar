@@ -2,13 +2,15 @@
 use crate::Result;
 use aws_sdk_s3::{types::ByteStream, Client};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use rand::prelude::*;
+use sha2::Digest;
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     path::Path,
 };
+use tokio::io::AsyncReadExt;
 use url::Url;
 
 /// Max concurrent S3 operations when dealing with test data
@@ -42,6 +44,7 @@ pub struct TestObjectWithData {
     pub key: String,
     pub url: Url,
     pub data: Vec<u8>,
+    pub hash: [u8; 32],
 }
 
 /// Generate one or more test objects in a bucket.
@@ -70,10 +73,17 @@ pub async fn make_test_data(
 
     while let Some(result) = test_data_stream.next().await {
         let (key, data) = result?;
+
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(&data);
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&hasher.finalize());
+
         let object = TestObjectWithData {
             url: format!("s3://{}/{}", bucket, key).parse().unwrap(),
             key: key.clone(),
             data,
+            hash,
         };
         assert!(
             test_objects.insert(object.key.clone(), object).is_none(),
@@ -156,7 +166,7 @@ where
 
     // Verify all of the expected keys are actually present in the `test_data` hash table, and make
     // a new hash table of just the expected keys
-    let expected_test_data: HashMap<Cow<'static, str>, &TestObjectWithData> = expected_keys.into_iter()
+    let mut expected_test_data: HashMap<Cow<'static, str>, &TestObjectWithData> = expected_keys.into_iter()
         .map(|item| {
             let key = item.into();
             let data = test_data.get(key.as_ref())
@@ -174,15 +184,177 @@ where
         .map(|key| key.to_string())
         .collect::<HashSet<_>>();
 
-    for file in files {
-        let key = file.to_string_lossy();
-        if !expected_keys.remove(key.as_ref()) {
+    for relative_path in files {
+        let key = relative_path.to_string_lossy();
+        let test_data = expected_test_data.remove(key.as_ref()).unwrap_or_else(|| {
             // There was no object with this name
             panic!(
                 "Tar archive contains file `{}` which is not among the expected test data",
-                file.display()
+                relative_path.display()
             );
+        });
+        expected_keys.remove(key.as_ref());
+
+        // Verify the file contents matches the expected data
+        let mut file = tokio::fs::File::open(path.join(&relative_path)).await?;
+        let metadata = file.metadata().await?;
+        let mut data = Vec::with_capacity(metadata.len() as usize);
+
+        file.read_to_end(&mut data).await?;
+
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(&data);
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&hasher.finalize());
+
+        assert_eq!(
+            hash,
+            test_data.hash,
+            "File '{}' (key '{}') hash doesn't match expected value",
+            relative_path.display(),
+            key
+        );
+    }
+
+    if !expected_keys.is_empty() {
+        // Some test data objects were not present in the path
+        panic!(
+            "One or more test data objects were not found in the archive: {}",
+            expected_keys.into_iter().collect::<Vec<_>>().join(",")
+        )
+    }
+
+    Ok(())
+}
+
+/// Validate the test data in a hash map against an S3 bucket to which an archive containing the
+/// test data has been extracted.
+#[track_caller]
+pub async fn validate_test_data_in_s3<Keys, Item>(
+    client: &aws_sdk_s3::Client,
+    test_data: &HashMap<String, TestObjectWithData>,
+    bucket: &str,
+    prefix: &str,
+    expected_keys: Keys,
+) -> Result<()>
+where
+    Keys: IntoIterator<Item = Item>,
+    Item: Into<Cow<'static, str>>,
+{
+    // First list all objects in the bucket and prefix
+    let mut objects = HashMap::new();
+
+    let pages = client
+        .list_objects_v2()
+        .bucket(bucket)
+        .prefix(prefix)
+        .into_paginator()
+        .send();
+
+    // Translate this stream of pages of object listings into a stream of AWS SDK
+    // 'Object' structs so we can process them one at a time
+    let mut pages = pages.map(|result| {
+        let page = result?;
+        let result: Result<Vec<aws_sdk_s3::model::Object>> = Ok(page.contents.unwrap_or_default());
+
+        result
+    });
+
+    while let Some(result) = pages.next().await {
+        for object in result? {
+            objects.insert(object.key().unwrap().to_owned(), object);
         }
+    }
+
+    // Verify all of the expected keys are actually present in the `test_data` hash table, and make
+    // a new hash table of just the expected keys
+    let mut expected_test_data: HashMap<Cow<'static, str>, &TestObjectWithData> = expected_keys.into_iter()
+        .map(|item| {
+            let key = item.into();
+            let data = test_data.get(key.as_ref())
+                .unwrap_or_else(|| panic!("BUG: test specifies expected key '{key}' but the `test_data` collection doesn't have such an entry"));
+
+            (key, data)
+        })
+        .collect();
+
+    // Make a set of all expected object keys, and go object by object making sure there was an object key with
+    // the same name, then remove it from the set so that we can also list excess object keys that
+    // don't correspond to any objects
+    let mut expected_keys = expected_test_data
+        .keys()
+        .map(|key| key.to_string())
+        .collect::<HashSet<_>>();
+
+    for (key, object) in objects {
+        // In the test data hashmap, keys are identified without whatever prefix was used when
+        // extracting, so use that form here
+        let relative_key = key.strip_prefix(prefix).unwrap();
+
+        let test_data = expected_test_data.remove(relative_key).unwrap_or_else(|| {
+            // There was no object with this name
+            panic!(
+                "Bucket contains object `{}` which is not among the expected test data",
+                relative_key
+            );
+        });
+        expected_keys.remove(relative_key);
+
+        // Verify the object contents matches the expected data.
+        // This doesn't require reading the data because the extract operation enables SHA256 hash
+        // computation
+        let object_hash = {
+            let object = client
+                .head_object()
+                .bucket(bucket)
+                .key(&key)
+                .checksum_mode(aws_sdk_s3::model::ChecksumMode::Enabled)
+                .send()
+                .await?;
+
+            let object = dbg!(object);
+
+            object.checksum_sha256().map(|hash| hash.to_owned())
+        };
+
+        let hash = match object_hash {
+            Some(object_hash) => {
+                // The hash is expressed as a base64 encoded string.
+                // Decode into a propery hash and then compare
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&base64::decode(object_hash).unwrap());
+                hash
+            }
+            None => {
+                // XXX: Actually the above statement would be correct, except that minio still doesn't
+                // support the enhanced checksum algorithms that S3 does.
+                //
+                // https://github.com/minio/minio/issues/14885
+                //
+                // As of Late August 2022, it was something they seem to be working on but it's not
+                // available yet.  Fuck!
+                //
+                // Fall back to reading the entire object contents
+                // While minio doesn't support the AWS checksum algorithms we have to compute the checksum
+                // by downloading the data
+                let response = client.get_object().bucket(bucket).key(&key).send().await?;
+
+                let mut body = response.body;
+                let mut hasher = sha2::Sha256::new();
+                while let Some(bytes) = body.try_next().await? {
+                    hasher.update(bytes);
+                }
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&hasher.finalize());
+                hash
+            }
+        };
+
+        assert_eq!(
+            hash, test_data.hash,
+            "S3 object '{}' (key '{}') hash doesn't match expected value",
+            relative_key, key
+        );
     }
 
     if !expected_keys.is_empty() {

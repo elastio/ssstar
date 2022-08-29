@@ -304,6 +304,7 @@ impl S3Bucket {
                     .key(&key)
                     .upload_id(upload_id)
                     .part_number(part_number as i32)
+                    .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
                     .body(aws_sdk_s3::types::ByteStream::from(chunk.data))
                     .send()
                     .await

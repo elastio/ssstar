@@ -243,7 +243,7 @@ impl SourceArchiveInternal {
 enum ExtractFilter {
     Object { key: String },
     Prefix { prefix: String },
-    Glob { pattern: String },
+    Glob { pattern: glob::Pattern },
 }
 
 impl FromStr for ExtractFilter {
@@ -259,7 +259,11 @@ impl FromStr for ExtractFilter {
         } else if s.contains('*') || s.contains('?') || s.contains('[') || s.contains(']') {
             // This looks like a glob
             Ok(Self::Glob {
-                pattern: s.to_string(),
+                pattern: glob::Pattern::from_str(s).with_context(|_| {
+                    crate::error::InvalidGlobPatternSnafu {
+                        pattern: s.to_string(),
+                    }
+                })?,
             })
         } else if s.ends_with("/") {
             // This is a prefix
@@ -275,8 +279,27 @@ impl FromStr for ExtractFilter {
 
 impl ExtractFilter {
     /// Evaluate this filter against the tar entry file path
+    ///
+    /// Tar archive entries always have a relative path, and the path is equal to the object key,
+    /// inclusive of any prefixes.  So if the object was `foo/bar/baz`, then `path` here will also
+    /// be `foo/bar/baz`
     fn matches(&self, path: &Path) -> bool {
-        todo!()
+        match self {
+            Self::Object { key } => path.to_string_lossy() == key.as_ref(),
+            Self::Prefix { prefix } => path.to_string_lossy().starts_with(&*prefix),
+            Self::Glob { pattern } => {
+                // To make sure the glob matching behaviors like it does in unix shells, require
+                // that `/` path separator chars must be matched by literal `/` and will never be
+                // matched by a `*` or `?`.  Without this, `prefix1/*` will match an object
+                // `prefix1/prefix2/test` which is absolutely not how UNIX shell globbing works
+                let match_options = glob::MatchOptions {
+                    require_literal_separator: true,
+                    ..Default::default()
+                };
+
+                pattern.matches_with(&path.to_string_lossy(), match_options)
+            }
+        }
     }
 }
 
@@ -738,10 +761,9 @@ impl ExtractArchiveJob {
 
                     progress.object_upload_starting(&key, len);
 
-                    let (mut bytes_writer, mut progress_receiver, mut result_receiver) =
-                        target_bucket
-                            .create_object_writer(key.clone(), Some(len))
-                            .await?;
+                    let (mut bytes_writer, mut progress_receiver, result_receiver) = target_bucket
+                        .create_object_writer(key.clone(), Some(len))
+                        .await?;
 
                     // Keep reading the entry receiver to get all of the parts of this file
                     let mut total_bytes_read = 0u64;

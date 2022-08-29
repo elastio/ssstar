@@ -422,34 +422,6 @@ mod create {
 mod extract {
     use super::*;
 
-    fn tar_in_bucket(bucket: &str, key: &str) -> (Url, ssstar::SourceArchive) {
-        let url: Url = format!("s3://{}/{}", bucket, key).parse().unwrap();
-        let source_archive = ssstar::SourceArchive::ObjectStorage(url.clone());
-
-        (url, source_archive)
-    }
-
-    fn tar_in_file() -> (TempDir, PathBuf, ssstar::SourceArchive) {
-        let tempdir = TempDir::new("ssstar-tests-tar").unwrap();
-        let path = tempdir.path().join("test.tar");
-
-        let source_archive = ssstar::SourceArchive::File(path.clone());
-
-        (tempdir, path, source_archive)
-    }
-
-    /// Same as `tar_in_file` except the file is exposed as an arbitrary `Read` instead
-    async fn tar_in_reader() -> (TempDir, PathBuf, ssstar::SourceArchive) {
-        let (tempdir, path, _) = tar_in_file();
-
-        // XXX: yes technically this call to `create` should be in a `spawn_blocking` since it can
-        // block but it's just test code and the latency is trivial
-        let source_archive =
-            ssstar::SourceArchive::Reader(Box::new(std::fs::File::create(&path).unwrap()));
-
-        (tempdir, path, source_archive)
-    }
-
     /// Macro which helps to make tests that have a repetitive structure but vary only in certain
     /// parameters.
     ///
@@ -487,7 +459,7 @@ mod extract {
             /// Create an archive containing all of the test data, stored in the specified bucket.
             ///
             /// Return the URL of the tar archive for use extracting in tests.
-            async fn create_archive(server: &minio::MinioServer, bucket: &str) -> Result<Url> {
+            async fn create_archive_on_s3(server: &minio::MinioServer, bucket: &str) -> Result<Url> {
                 let url: Url = format!("s3://{}/test.tar", bucket).parse().unwrap();
                 let target_archive = ssstar::TargetArchive::ObjectStorage(url.clone());
 
@@ -508,6 +480,30 @@ mod extract {
                 Ok(url)
             }
 
+            /// Create an archive containing all of the test data in the test bucket, stored in a temp directory
+            /// created for that purpose
+            async fn create_archive_on_disk(server: &minio::MinioServer, bucket: &str) -> Result<(TempDir, PathBuf)> {
+                let temp_dir = tempdir::TempDir::new("extract-test").unwrap();
+                let tar_path = temp_dir.path().join("test.tar");
+                let target_archive = ssstar::TargetArchive::File(tar_path.clone());
+
+                let mut builder =
+                    ssstar::CreateArchiveJobBuilder::new(config_for_minio(server), target_archive);
+
+                // Always add the entire bucket so all test data are included in the archive
+                builder.add_input(&format!("s3://{}/", bucket).parse().unwrap()).await?;
+
+                let job = builder.build().await?;
+                let progress = TestCreateProgressCallback::new();
+
+                job.run(futures::future::pending(), progress.clone())
+                    .await?;
+
+                progress.sanity_check_updates();
+
+                Ok((temp_dir, tar_path))
+            }
+
             async fn test_data(server: &minio::MinioServer, bucket: &str) -> Result<HashMap<String, test_data::TestObjectWithData>> {
                 test_data::make_test_data(
                     &server.aws_client().await?,
@@ -526,6 +522,7 @@ mod extract {
                 target_bucket: &str,
                 target_prefix: &str
                 ) -> Result<ssstar::ExtractArchiveJob> {
+                #[allow(unused_mut)] // `mut` is unnecessary only if there are no filters
                 let mut builder =
                     ssstar::ExtractArchiveJobBuilder::new(config_for_minio(server),
                         source_archive,
@@ -551,10 +548,19 @@ mod extract {
                 Ok(())
             }
 
-            async fn validate_archive_contents(test_data: HashMap<String, test_data::TestObjectWithData>, tar_tmp_dir: &Path) -> Result<()> {
-                // TODO: implement this properly
-                //let expected_objects = [$($expected_key),*];
-                //test_data::validate_test_data_in_dir(&test_data, tar_tmp_dir, expected_objects).await?;
+            async fn validate_bucket_contents(server: &minio::MinioServer,
+                test_data: HashMap<String, test_data::TestObjectWithData>,
+                bucket: &str,
+                prefix: &str
+            ) -> Result<()> {
+                let expected_objects = [$($expected_key),*];
+
+                let client = server.aws_client().await?;
+                test_data::validate_test_data_in_s3(&client,
+                    &test_data,
+                    bucket,
+                    prefix,
+                    expected_objects).await?;
 
                 Ok(())
             }
@@ -565,7 +571,7 @@ mod extract {
                 ssstar_testing::logging::test_with_logging(async move {
                     let (server, source_bucket, target_bucket) = test_setup(true).await?;
                     let test_data = test_data(&server, &source_bucket).await?;
-                    let source_archive_url = create_archive(&server, &source_bucket).await?;
+                    let source_archive_url = create_archive_on_s3(&server, &source_bucket).await?;
                     let source_archive = ssstar::SourceArchive::ObjectStorage(source_archive_url);
 
                     let job = make_job(&server,
@@ -575,15 +581,50 @@ mod extract {
 
                     run_job(job).await?;
 
-                    // TODO: validate by listing all objects in the bucket and comparing the SHA256
-                    // hash with the hash computed for test data.  That should be a helper in test
-                    // data, and obviously it means we need to store sha256 hashes for test data
-                    // also.
-                    //let tar_tmp_dir =
-                    //    ssstar_testing::tar::extract_tar_archive_from_file(&tar_path)
-                    //        .await?;
-                    //
-                    //validate_archive_contents(test_data, tar_tmp_dir.path()).await?;
+                    validate_bucket_contents(&server, test_data, &target_bucket, "").await?;
+                    Ok(())
+                })
+            }
+
+            /// Extract from a tar on the local filesystem to a bucket with no prefix
+            #[test]
+            fn extract_from_archive_file_to_bucket_root() -> Result<()> {
+                ssstar_testing::logging::test_with_logging(async move {
+                    let (server, source_bucket, target_bucket) = test_setup(true).await?;
+                    let test_data = test_data(&server, &source_bucket).await?;
+                    let (_temp_dir, tar_path) = create_archive_on_disk(&server, &source_bucket).await?;
+                    let source_archive = ssstar::SourceArchive::File(tar_path);
+
+                    let job = make_job(&server,
+                        source_archive,
+                        &target_bucket,
+                        "").await?;
+
+                    run_job(job).await?;
+
+                    validate_bucket_contents(&server, test_data, &target_bucket, "").await?;
+                    Ok(())
+                })
+            }
+
+            /// Extract from a tar exposed as a generic `Read` to a bucket with no prefix
+            #[test]
+            fn extract_from_archive_reader_to_bucket_root() -> Result<()> {
+                ssstar_testing::logging::test_with_logging(async move {
+                    let (server, source_bucket, target_bucket) = test_setup(true).await?;
+                    let test_data = test_data(&server, &source_bucket).await?;
+                    let (_temp_dir, tar_path) = create_archive_on_disk(&server, &source_bucket).await?;
+                    let reader = std::fs::File::open(&tar_path)?;
+                    let source_archive = ssstar::SourceArchive::Reader(Box::new(reader));
+
+                    let job = make_job(&server,
+                        source_archive,
+                        &target_bucket,
+                        "").await?;
+
+                    run_job(job).await?;
+
+                    validate_bucket_contents(&server, test_data, &target_bucket, "").await?;
                     Ok(())
                 })
             }
@@ -596,7 +637,9 @@ mod extract {
         ssstar_testing::logging::test_with_logging(async move {
             let server = minio::MinioServer::get().await?;
             let bucket = server.create_bucket("empty", false).await?;
-            let (_, source_archive) = tar_in_bucket(&bucket, "test.tar");
+            let source_archive = ssstar::SourceArchive::ObjectStorage(
+                format!("s3://{}/test.tar", bucket).parse().unwrap(),
+            );
             let target: Url = format!("s3://{}/target/", bucket).parse().unwrap();
 
             let result = ssstar::ExtractArchiveJobBuilder::new(
@@ -616,10 +659,126 @@ mod extract {
 
     // Perform a simple test with a single object and no filters
     extract_test! {
-        single_object_no_filters {
+        small_object_no_filters {
             @bucket_contents: ["test" => "1KiB"],
             @filters: [],
             @expected_objects: ["test"]
+        }
+    }
+
+    // Archive with one file large enough that it will be restored with multipart
+    extract_test! {
+        large_object_no_filters {
+            @bucket_contents: ["test" => "20MiB"],
+            @filters: [],
+            @expected_objects: ["test"]
+        }
+    }
+
+    // Filter the extraction by specific named objects
+    extract_test! {
+        filter_by_object_name {
+            @bucket_contents: [
+                "test1" => "1KiB",
+                "test2" => "1KiB",
+                "test3" => "1KiB",
+                "test4" => "1KiB",
+                "test5" => "1KiB",
+                "test6" => "1KiB",
+                "test7" => "1KiB",
+                "test8" => "1KiB",
+                "test9" => "1KiB",
+                "test10" => "1KiB",
+                "test11" => "1KiB",
+                "test12" => "1KiB",
+                "test13" => "1KiB",
+                "test14" => "1KiB",
+                "test15" => "1KiB",
+                "test16" => "1KiB",
+                "test17" => "1KiB",
+                "test18" => "1KiB",
+                "test19" => "1KiB",
+                "test20" => "1KiB"
+            ],
+            @filters: ["test1", "test5", "test9"],
+            @expected_objects: ["test1", "test5", "test9"]
+        }
+    }
+
+    // Filter the extraction by specific prefixes
+    extract_test! {
+        filter_by_prefix {
+            @bucket_contents: [
+                "foo/test1" => "1KiB",
+                "foo/test2" => "1KiB",
+                "foo/test3" => "1KiB",
+                "foo/test4" => "1KiB",
+                "foo/test5" => "1KiB",
+                "foo/test6" => "1KiB",
+                "foo/test7" => "1KiB",
+                "foo/test8" => "1KiB",
+                "foo/test9" => "1KiB",
+                "foo/test10" => "1KiB",
+                "bar/test11" => "1KiB",
+                "bar/test12" => "1KiB",
+                "bar/test13" => "1KiB",
+                "bar/test14" => "1KiB",
+                "bar/test15" => "1KiB",
+                "bar/test16" => "1KiB",
+                "bar/test17" => "1KiB",
+                "bar/test18" => "1KiB",
+                "bar/test19" => "1KiB",
+                "bar/test20" => "1KiB"
+            ],
+            @filters: ["bar/"],
+            @expected_objects: [
+                "bar/test11",
+                "bar/test12",
+                "bar/test13",
+                "bar/test14",
+                "bar/test15",
+                "bar/test16",
+                "bar/test17",
+                "bar/test18",
+                "bar/test19",
+                "bar/test20"
+            ]
+        }
+    }
+
+    // Filter the extraction by specific globs
+    extract_test! {
+        filter_by_glob {
+            @bucket_contents: [
+                "foo/test1.txt" => "1KiB",
+                "foo/test2.dat" => "1KiB",
+                "foo/test3.bin" => "1KiB",
+                "foo/test4.txt" => "1KiB",
+                "foo/test5.doc" => "1KiB",
+                "foo/test6.sql" => "1KiB",
+                "foo/test7.txt" => "1KiB",
+                "foo/test8.dat" => "1KiB",
+                "foo/test9.foo" => "1KiB",
+                "foo/test10.bar" => "1KiB",
+                "bar/test11.bin" => "1KiB",
+                "bar/test12.doc" => "1KiB",
+                "bar/test13.sql" => "1KiB",
+                "bar/test14.txt" => "1KiB",
+                "bar/test15.dat" => "1KiB",
+                "bar/test16.foo" => "1KiB",
+                "bar/test17.html" => "1KiB",
+                "bar/test18.xml" => "1KiB",
+                "bar/test19.sav" => "1KiB",
+                "bar/test20.wav" => "1KiB"
+            ],
+            @filters: ["**/*.txt", "bar/*.bin"],
+            @expected_objects: [
+                "foo/test1.txt",
+                "foo/test4.txt",
+                "foo/test7.txt",
+                "bar/test11.bin",
+                "bar/test14.txt"
+            ]
         }
     }
 }
