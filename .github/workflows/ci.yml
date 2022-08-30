@@ -65,13 +65,24 @@ jobs:
           profile: minimal
           override: true
       - uses: Swatinem/rust-cache@v1
+      - name: Cache the minio binary
+        id: cache-minio
+        uses: actions/cache@v3
+        with:
+          path: ~/.local/bin
+          key: ${{ runner.os }}-minio
       - name: Install minio
         shell: bash
         run: |
+          # Download the minio binary if it's not already present
+          # Most of the time the minio binary should be in the cache and doesn't need to be downloaded again
           mkdir -p $HOME/.local/bin
           cd $HOME/.local/bin
-          wget https://dl.min.io/server/minio/release/linux-amd64/minio
-          chmod +x minio
+          if [[ ! -x ./minio ]]
+          then
+            wget https://dl.min.io/server/minio/release/linux-amd64/minio
+            chmod +x minio
+          fi
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Run local tests
         uses: actions-rs/cargo@v1
