@@ -136,6 +136,7 @@ jobs:
           mkdir -p $HOME/.local/bin
           cd $HOME/.local/bin
           if [[ ! -x ./minio ]]
+          then
             curl --progress-bar -O https://dl.min.io/server/minio/release/darwin-amd64/minio
             chmod +x minio
           fi
