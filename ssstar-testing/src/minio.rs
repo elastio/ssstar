@@ -156,6 +156,8 @@ impl MinioServer {
         // So need to make this bucket name comply with the rules
         static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r##"[^0-9a-zA-Z\.\-]+"##).unwrap());
 
+        debug!(bucket = bucket.as_ref(), "Creating bucket");
+
         let bucket = REGEX.replace_all(bucket.as_ref(), "-");
 
         // Shorten the bucket name so we can append the unique ID and it will still be under 63
@@ -165,9 +167,32 @@ impl MinioServer {
         // Prepend a random number to ensure the bucket name is unique across multiple tests
         let bucket = format!("{:08x}-{bucket}", rand::thread_rng().next_u32());
 
+        debug!(%bucket, "Transformed bucket name into valid and unique bucket ID");
+
         let client = self.aws_client().await?;
 
         client.create_bucket().bucket(bucket.clone()).send().await?;
+
+        // The creation of a bucket seems like it's sometimes asynchronous, because even after
+        // `create_bucket` returns operations on it can fail with errors like:
+        //
+        // The S3 bucket '7ae02532-filter-by-prefix-src' either doesn't exist, or your IAM identity is not granted access
+        //
+        // So make sure the bucket actually was created before proceeding
+        let policy = again::RetryPolicy::exponential(Duration::from_millis(100))
+            .with_max_retries(10)
+            .with_max_delay(Duration::from_secs(1));
+
+        let client = self.aws_client().await?;
+
+        if let Err(e) = policy
+            .retry(|| client.head_bucket().bucket(&bucket).send())
+            .await
+        {
+            return Err(
+                eyre!("The bucket {bucket} is not accessible even after it was explicitly created.  Last error was: \n{e}")
+            );
+        };
 
         if enable_versioning {
             client
@@ -181,6 +206,8 @@ impl MinioServer {
                 .send()
                 .await?;
         }
+
+        debug!(%bucket, "Bucket created");
 
         Ok(bucket)
     }
@@ -241,6 +268,8 @@ impl MinioServer {
 
 impl Drop for MinioServer {
     fn drop(&mut self) {
+        debug!(pids = ?self.handle.pids(), "Killing minio process(es)");
+
         if let Err(e) = self.handle.kill() {
             eprintln!("Error killing minio process: {}", e);
         }
