@@ -48,11 +48,11 @@ example:
 ```shell
 # Archive a bunch of different inputs, writing the result to a file
 ssstar create \
-	s3://my-source-bucket/										\ # <-- this includes all objects in `my-source-bucket`
-	s3://my-other-bucket/foo/									\ # <-- this includes all objects in `foo/` (non-recursive)
-	s3://my-other-bucket/bar/boo							\ # <-- this includes the object with key `bar/boo`
-	"s3://yet-another-bucket/logs/2022*/**"		\ # <-- this recursively includes all objects in any prefix `logs/2022*`
-	--file ./backup.tar												# <-- this is the path where the tar archive will be written
+  s3://my-source-bucket/                    \ # <-- this includes all objects in `my-source-bucket`
+  s3://my-other-bucket/foo/                 \ # <-- this includes all objects in `foo/` (non-recursive)
+  s3://my-other-bucket/bar/boo              \ # <-- this includes the object with key `bar/boo`
+  "s3://yet-another-bucket/logs/2022*/**"   \ # <-- this recursively includes all objects in any prefix `logs/2022*`
+  --file ./backup.tar                       # <-- this is the path where the tar archive will be written
 ```
 
 To extract a tar archive and write the contents directly to S3 objects, you specify where to find the tar archive,
@@ -86,10 +86,10 @@ file paths, directory paths ending in `/`, or globs.  For example:
 
 ```shell
 ssstar extract --file ./backup.tar \
-	foo/bar/baz.txt												\ # <-- extract the file `foo/bar/baz.txt` if it's present in the archive
-	boo/																	\ # <-- extract all files in the `boo` directory (recursive)
-	"baz/**/*.txt"												\ # <-- extract any `.txt` file anywhere in `baz/`, recursively
-	s3://my-bucket/restored/								# <-- write all matching files to the `restored/` prefix in `my-bucket`
+  foo/bar/baz.txt                       \ # <-- extract the file `foo/bar/baz.txt` if it's present in the archive
+  boo/                                  \ # <-- extract all files in the `boo` directory (recursive)
+  "baz/**/*.txt"                        \ # <-- extract any `.txt` file anywhere in `baz/`, recursively
+  s3://my-bucket/restored/                # <-- write all matching files to the `restored/` prefix in `my-bucket`
 ```
 
 ## Usage (with Elastio)
@@ -120,7 +120,7 @@ functionality into your Rust application.  Just add `ssstar` as a dependency in 
 
 ```toml
 [dependencies]
-ssstar = 0.1.0
+ssstar = "0.1.0"
 ```
 
 See the [docs.rs](https://docs.rs/ssstar) documentation for `ssstar` for more details and some examples.  You can also
@@ -150,12 +150,12 @@ Here's an example CLI that @anelson uses.  This won't work unless you have confi
 
 ```shell
 ssstar create \
-	s3://elastio-vault-default-8ibrn2zg6/vault.json \
-	s3://elastio-vault-default-8ibrn2zg6/fixed:65536/metadata/chunks/db/ \
-	s3://elastio-vault-default-8ibrn2zg6/fixed:65536/metadata/extents/db/ \
-	s3://elastio-vault-anelson-test-a045e7928d \
-	"s3://elastio-account-level-stack-tfstate42168d51-qjatbtl9y9ve/**" \
-	--s3 s3://elastio-vault-default-8ibrn2zg6/test.tar
+  s3://elastio-vault-default-8ibrn2zg6/vault.json \
+  s3://elastio-vault-default-8ibrn2zg6/fixed:65536/metadata/chunks/db/ \
+  s3://elastio-vault-default-8ibrn2zg6/fixed:65536/metadata/extents/db/ \
+  s3://elastio-vault-anelson-test-a045e7928d \
+  "s3://elastio-account-level-stack-tfstate42168d51-qjatbtl9y9ve/**" \
+  --s3 s3://elastio-vault-default-8ibrn2zg6/test.tar
 ```
 
 ## Installation
