@@ -182,6 +182,7 @@ where
             let entry = result?;
 
             let relative_path = entry.path().strip_prefix(path)?.to_owned();
+
             println!(
                 "  {} ({} bytes)",
                 relative_path.display(),
@@ -193,11 +194,20 @@ where
 
     // Verify all of the expected keys are actually present in the `test_data` hash table, and make
     // a new hash table of just the expected keys
-    let mut expected_test_data: HashMap<Cow<'static, str>, &TestObjectWithData> = expected_keys.into_iter()
+    let mut expected_test_data: HashMap<String, &TestObjectWithData> = expected_keys.into_iter()
         .map(|item| {
             let key = item.into();
             let data = test_data.get(key.as_ref())
                 .unwrap_or_else(|| panic!("BUG: test specifies expected key '{key}' but the `test_data` collection doesn't have such an entry"));
+
+            // On Windows, the file paths listed in `files` will use `\` path separators, but our
+            // tests always specify expected keys using `/` separators.  Rewrite the expected keys
+            // here
+            #[cfg(windows)]
+            let key = key.replace('/', '\\');
+
+            #[cfg(not(windows))]
+            let key = key.to_string();
 
             (key, data)
         })
