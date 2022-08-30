@@ -204,7 +204,7 @@ where
             // tests always specify expected keys using `/` separators.  Rewrite the expected keys
             // here
             #[cfg(windows)]
-            let key = key.replace('/', '\\');
+            let key = key.replace('/', "\\");
 
             #[cfg(not(windows))]
             let key = key.to_string();

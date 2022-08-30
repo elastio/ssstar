@@ -13,6 +13,9 @@ keywords = ["tar", "s3", "archive"]
 categories = ["command-line-utilities", "filesystem"]
 license = "Apache-2.0 OR MIT"
 
+[badges]
+maintenance = { status = "actively-developed" }
+
 [[bin]]
 bench = false
 path = "src/main.rs"
