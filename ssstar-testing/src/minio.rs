@@ -1,5 +1,6 @@
-/// Wrapper around the `minio` server binary to run ephemeral instances of S3-compatible object
-/// storage for testing
+//! Wrapper around the `minio` server binary to run ephemeral instances of S3-compatible object
+//! storage for testing
+
 use crate::Result;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{Credentials, Endpoint, Region};
@@ -16,6 +17,7 @@ use std::{
 };
 use tempdir::TempDir;
 use tokio::sync::Mutex;
+use tracing::debug;
 use which::which;
 
 pub struct MinioServer {
@@ -39,20 +41,20 @@ impl MinioServer {
 
         let mut instance = INSTANCE.lock().await;
 
-        match instance.as_ref() {
+        let server = match instance.as_ref() {
             Some(weak) => {
                 // A weak ref is already in place.  Is the thing it references still alive?
                 match weak.upgrade() {
                     Some(strong) => {
                         // Still alive so we can use this reference
-                        Ok(strong)
+                        strong
                     }
                     None => {
                         // Ref went to zero so server was already dropped.  Start another one
                         let strong = Arc::new(Self::start().await?);
                         *instance = Some(Arc::downgrade(&strong));
 
-                        Ok(strong)
+                        strong
                     }
                 }
             }
@@ -61,9 +63,17 @@ impl MinioServer {
                 let strong = Arc::new(Self::start().await?);
                 *instance = Some(Arc::downgrade(&strong));
 
-                Ok(strong)
+                strong
             }
-        }
+        };
+
+        debug!(endpoint = %server.endpoint,
+            "get() found minio server");
+
+        // Make sure the server is still working
+        server.wait_for_service_start().await?;
+
+        Ok(server)
     }
 
     /// Start a new minio server on a random high port.
@@ -97,7 +107,11 @@ impl MinioServer {
             endpoint,
         };
 
+        debug!(endpoint = %minio_server.endpoint, "Waiting for minio service to start");
+
         minio_server.wait_for_service_start().await?;
+
+        debug!(endpoint = %minio_server.endpoint, "Minio started");
 
         Ok(minio_server)
     }
