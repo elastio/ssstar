@@ -28,17 +28,25 @@ archive to be written:
 ```shell
 
 # Archive an entire bucket and write the tar archive to another bucket
-ssstar create s3://my-source-bucket --s3 s3://my-destination-bucket/backup.tar
+ssstar create \
+  s3://my-source-bucket \
+  --s3 s3://my-destination-bucket/backup.tar
 
 # Archive all objects in the `foo/` prefix (non-recursive) and write the tar archive to a local file
-ssstar create s3://my-source-bucket/foo/ --file ./backup.tar
+ssstar create \
+  s3://my-source-bucket/foo/ \
+  --file ./backup.tar
 
 # Archive some specific objects identified by name, and write the tar archive to stdout and pipe that to
 # gzip
-ssstar create s3://my-source-bucket/object1 s3://my-source-bucket/object2 --stdout | gzip > backup.tar.gz
+ssstar create \
+  s3://my-source-bucket/object1 s3://my-source-bucket/object2 \
+  --stdout | gzip > backup.tar.gz
 
 # Archive all objects matching a glob, and write the tar archive to another bucket
-ssstar create "s3://my-source-bucket/foo/**" --s3 s3://my-destination-bucket/backup.tar
+ssstar create \
+  "s3://my-source-bucket/foo/**" \
+  --s3 s3://my-destination-bucket/backup.tar
 ```
 
 You can pass multiple inputs to `ssstar create`, using a mix of entire buckets, prefixes, specific objects, and globs.
@@ -48,11 +56,11 @@ example:
 ```shell
 # Archive a bunch of different inputs, writing the result to a file
 ssstar create \
-  s3://my-source-bucket/                    \ # <-- this includes all objects in `my-source-bucket`
-  s3://my-other-bucket/foo/                 \ # <-- this includes all objects in `foo/` (non-recursive)
-  s3://my-other-bucket/bar/boo              \ # <-- this includes the object with key `bar/boo`
-  "s3://yet-another-bucket/logs/2022*/**"   \ # <-- this recursively includes all objects in any prefix `logs/2022*`
-  --file ./backup.tar                       # <-- this is the path where the tar archive will be written
+  s3://my-source-bucket/                  \ # <-- include all objects in `my-source-bucket`
+  s3://my-other-bucket/foo/               \ # <-- include all objects in `foo/` (non-recursive)
+  s3://my-other-bucket/bar/boo            \ # <-- include the object with key `bar/boo`
+  "s3://yet-another-bucket/logs/2022*/**" \ # <-- recursively include all objects in any prefix `logs/2022*`
+  --file ./backup.tar                     # <-- this is the path where the tar archive will be written
 ```
 
 To extract a tar archive and write the contents directly to S3 objects, you specify where to find the tar archive,
@@ -86,10 +94,10 @@ file paths, directory paths ending in `/`, or globs.  For example:
 
 ```shell
 ssstar extract --file ./backup.tar \
-  foo/bar/baz.txt                       \ # <-- extract the file `foo/bar/baz.txt` if it's present in the archive
-  boo/                                  \ # <-- extract all files in the `boo` directory (recursive)
-  "baz/**/*.txt"                        \ # <-- extract any `.txt` file anywhere in `baz/`, recursively
-  s3://my-bucket/restored/                # <-- write all matching files to the `restored/` prefix in `my-bucket`
+  foo/bar/baz.txt          \ # <-- extract the file `foo/bar/baz.txt` if it's present in the archive
+  boo/                     \ # <-- extract all files in the `boo` directory (recursive)
+  "baz/**/*.txt"           \ # <-- extract any `.txt` file anywhere in `baz/`, recursively
+  s3://my-bucket/restored/   # <-- write all matching files to the `restored/` prefix in `my-bucket`
 ```
 
 ## Usage (with Elastio)
@@ -100,16 +108,44 @@ To use with Elastio, create archives with the `--stdout` option and pipe to `ela
 
 ```shell
 # Backup an entire S3 bucket `my-source-bucket` to the default Elastio vault:
-ssstar create s3://my-source-bucket/ --stdout | elastio stream backup --hostname-override my-source-bucket
+ssstar create s3://my-source-bucket/ --stdout \
+  | elastio stream backup --hostname-override my-source-bucket
 ```
-
 
 ```shell
 # Restore a recovery point with ID `$RP_ID` from Elastio to the `my-destination-bucket` bucket:
-elastio stream restore --rp-id $RP_ID | ssstar extract --stdin s3://my-destination-bucket
+elastio stream restore --rp-id $RP_ID \
+  | ssstar extract --stdin s3://my-destination-bucket
 ```
 
 For more about using the Elastio CLI, see the [Elastio CLI docs](https://docs.elastio.com/src/elastio-cli/elastio-cli-overview.html)
+
+## Advanced CLI Options
+
+Run `ssstar create --help` and `ssstar extract --help` to get the complete CLI usage documentation for archive creation
+and extraction, respectively.  There are a few command line options that are particularly likely to be of interest:
+
+### Using a custom S3 endpoint
+
+`ssstar` is developed and tested against AWS S3, however it should work with any object storage system that provides an
+S3-compatible API.  In particular, most of the automated tests our CI system runs actually use [Minio](https://min.io)
+and not the real S3 API.  To use `ssstar` with an S3-compatible API, use the `--s3_endpoint` option.  For example, if
+you have a Minio server running at `127.0.7.1:30000`, using default `minioadmin` credentials, you can use it with
+`ssstar` like this:
+
+```shell
+ssstar --s3-endpoint http://127.0.0.1:30000 \
+  --aws-access-key-id minioadmin --aws-secret-access-key minio-admin \
+  ...
+```
+
+### Controlling Concurrency
+
+The `--max-concurrent-requests` argument controls how many concurrent S3 API operations will be performed in each stage
+of the archive creation or extraction process.  The default is 10, because that is what the AWS CLI uses.  However if
+you are running `ssstar` on an EC2 instance with multi-gigabit Ethernet connectivity to S3, 10 concurrent requests may
+not be enough to saturate the network connection.  Experiment with larger values to see if you experience faster
+transfer times with more concurrency.
 
 ## Usage (in a Rust project)
 
