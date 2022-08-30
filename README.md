@@ -4,12 +4,11 @@ ssstar is a Rust library crate as well as a command-line tool to create and extr
 objects stored in S3 or S3-compatible storage.  It works similarly to GNU `tar`, and produces archives that are 100%
 compatible with `tar`, though it uses different command line arguments.
 
-[![Build status](https://github.com/elastio/ssstar/workflows/ci/badge.svg)](https://github.com/elastio/ssstar/actions)
 [![Crates.io](https://img.shields.io/crates/v/ssstar.svg)](https://crates.io/crates/ssstar)
-[![Packaging status](https://repology.org/badge/tiny-repos/ssstar.svg)](https://repology.org/project/ssstar/badges)
-
-Dual-licensed under MIT or Apache-2.0.
-
+[![Docs.rs](https://docs.rs/ssstar/badge.svg)](https://docs.rs/ssstar)
+[![CI](https://github.com/elastio/ssstar/workflows/CI/badge.svg)](https://github.com/elastio/ssstar/actions)
+[![Coverage
+Status](https://coveralls.io/repos/github/elastio/ssstar/badge.svg?branch=master)](https://coveralls.io/github/elastio/ssstar?branch=master)
 
 ## :construction: Under Construction, Experimental
 
@@ -42,3 +41,29 @@ ssstar create \
 	--s3 s3://elastio-vault-default-8ibrn2zg6/test.tar
 ```
 
+## Installation
+
+### Cargo
+
+* Install the rust toolchain in order to have cargo installed by following
+  [this](https://www.rust-lang.org/tools/install) guide.
+* run `cargo install ssstar`
+
+## License
+
+Licensed under either of
+
+ * Apache License, Version 2.0
+   ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license
+   ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+## Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
