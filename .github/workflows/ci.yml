@@ -127,7 +127,7 @@ jobs:
             chmod +x minio
           fi
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-        if: runner.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest'
       - name: Install minio (mac)
         shell: bash
         run: |
@@ -140,14 +140,14 @@ jobs:
             chmod +x minio
           fi
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-        if: runner.os == 'macos-latest'
+        if: matrix.os == 'macos-latest'
       - name: Install minio (Windows)
         run: |
           # Download the minio binary if it's not already present
           mkdir -p C:\minio
           Invoke-WebRequest -Uri "https://dl.min.io/server/minio/release/windows-amd64/minio.exe" -OutFile "C:\minio\minio.exe"
           echo "C:\minio" >> $GITHUB_PATH
-        if: runner.os == 'windows'
+        if: matrix.os == 'windows'
 
       - name: Run local tests
         uses: actions-rs/cargo@v1
