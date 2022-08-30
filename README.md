@@ -18,7 +18,7 @@ Dual-licensed under MIT or Apache-2.0.
 To install on your local system, use `cargo install`, ie:
 
 ```shell
-cargo install --git https://github.com/elastio/ssstar.git --rev b4f6aad --locked --force ssstar-cli
+cargo install --git https://github.com/elastio/ssstar.git --rev b9cf76ca3 --locked --force ssstar-cli
 ```
 
 This uses the most recent commit that @anelson has designated as "stable"-ish.  You can drop the `--rev` argument and
