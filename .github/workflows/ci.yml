@@ -7,17 +7,33 @@ on:
   pull_request:
 
 jobs:
+  # New security advisories can pop up at any time, so they shouldn't fail a build, but they should
+  # fail the job to call attention to the fact that there's an advisory
+  check-rust-sec-advisories:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v2
+    - uses: EmbarkStudios/cargo-deny-action@v1
+      with:
+        arguments: --all-features --all-targets
+        command: check advisories
+
+  # Do all possible static checks here
   cargo-checks:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - uses: EmbarkStudios/cargo-deny-action@v1
     - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
       with:
         toolchain: nightly
         profile: minimal
         override: true
+    - uses: EmbarkStudios/cargo-deny-action@v1
+      with:
+        arguments: --all-features --all-targets
+        command: check bans licenses sources
     - name: Install cargo-udeps
       shell: bash
       run: |
