@@ -146,10 +146,10 @@ impl MinioServer {
 
         // Shorten the bucket name so we can append the unique ID and it will still be under 63
         // chars
-        let bucket = &bucket[..bucket.len().min(63 - 8)];
+        let bucket = &bucket[..bucket.len().min(63 - 9)];
 
         // Prepend a random number to ensure the bucket name is unique across multiple tests
-        let bucket = format!("{:08x}-{}", rand::thread_rng().next_u32(), bucket);
+        let bucket = format!("{:08x}-{bucket}", rand::thread_rng().next_u32());
 
         let client = self.aws_client().await?;
 

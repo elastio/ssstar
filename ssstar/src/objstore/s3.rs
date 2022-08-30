@@ -319,7 +319,14 @@ impl S3Bucket {
                     .expect("BUG: uploaded part missing etag")
                     .to_string();
 
-                debug!(%e_tag, "Uploaded multi-part chunk");
+                // XXX: When running against Minio, as of 30 Aug 2022 it doesn't have checksum
+                // support so thsi can be empty.  In that case, it won't be an error to omit the
+                // sha256 hash when completing the multipart upload
+                let sha256 = response
+                    .checksum_sha256()
+                    .map(|hash| hash.to_string());
+
+                debug!(%e_tag, sha256 = sha256.as_deref().unwrap_or_default(), "Uploaded multi-part chunk");
 
                 let _ = progress_sender.send(chunk_size);
 
@@ -327,6 +334,7 @@ impl S3Bucket {
                 // to the CompleteMultipartUpload call, so retain the key bits here
                 let completed_part = aws_sdk_s3::model::CompletedPart::builder()
                     .e_tag(e_tag)
+                    .set_checksum_sha256(sha256)
                     .part_number(part_number as i32)
                     .build();
 

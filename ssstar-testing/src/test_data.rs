@@ -3,7 +3,9 @@ use crate::Result;
 use aws_sdk_s3::{types::ByteStream, Client};
 use bytes::Bytes;
 use futures::{StreamExt, TryStreamExt};
+use once_cell::sync::Lazy;
 use rand::prelude::*;
+use regex::Regex;
 use sha2::Digest;
 use std::{
     borrow::Cow,
@@ -45,6 +47,31 @@ pub struct TestObjectWithData {
     pub url: Url,
     pub data: Vec<u8>,
     pub hash: [u8; 32],
+}
+
+/// Generate a unique prefix ending in a `/` character, and prepend it to the `key` in a collection
+/// of [`TestObject`]s.
+///
+/// Returns the unique prefix an an iterator that yields the modified test objects.
+///
+/// This is useful when running tests against a real S3 bucket, where multiple runs of the same
+/// test may write to the bucket so each test's object keys must be unique
+pub fn prepend_unique_prefix(
+    objects: impl IntoIterator<Item = TestObject>,
+) -> (String, impl IntoIterator<Item = TestObject>) {
+    let prefix = format!("{:08x}/", rand::thread_rng().next_u32());
+
+    let objects = {
+        let prefix = prefix.clone();
+
+        objects.into_iter().map(move |mut object| {
+            object.key = format!("{}{}", prefix, object.key);
+
+            object
+        })
+    };
+
+    (prefix, objects)
 }
 
 /// Generate one or more test objects in a bucket.
@@ -312,18 +339,109 @@ where
                 .send()
                 .await?;
 
-            let object = dbg!(object);
-
-            object.checksum_sha256().map(|hash| hash.to_owned())
+            dbg!(object.checksum_sha256)
         };
 
         let hash = match object_hash {
             Some(object_hash) => {
                 // The hash is expressed as a base64 encoded string.
-                // Decode into a propery hash and then compare
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&base64::decode(object_hash).unwrap());
-                hash
+                //
+                // It has two forms: if this object was uploaded as a single part, this string is
+                // literally the hash of the contents of the object.  But if it was uploaded using
+                // the multi-part API, the string is  base64 hash, followed by `-` and the number
+                // of parts.  In that case, the hash is a hash of all of the parts' hashes.
+                static MULTIPART_HASH: Lazy<Regex> = Lazy::new(|| {
+                    Regex::new(r##"^(?P<hash>(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{3}=|[A-Za-z\d+/]{2}==)?)-(?P<parts>\d+)$"##).unwrap()
+                });
+
+                if let Some(_captures) = MULTIPART_HASH.captures(&object_hash) {
+                    // XXX: The commented-out code below tries to use list_parts to compute the
+                    // aggregate hash of the object, but this doesn't work as of 30 Aug 2022
+                    // because the AWS SDK for Rust seems not to support `list_parts` correctly.  I
+                    // theorize that it's due to https://github.com/awslabs/smithy-rs/issues/1668
+                    // however I can't be sure.
+                    //
+                    // Since this is just test code, we know the objects in question will not be
+                    // particularly huge.  So in the case where the hash is a multipart hash, just
+                    // download the entire object from S3 and compute the hash anew.
+                    //
+                    // Someday perhaps restore this code and save a few seconds on integration test
+                    // runs
+
+                    /*
+                    // This is a multi-part hash so the validation of the hash just got more
+                    // complicated
+                    let hash_text = captures.name("hash").unwrap().as_str();
+
+                    // Decode the hash into binary
+                    let mut hash = [0u8; 32];
+
+                    hash.copy_from_slice(&base64::decode(hash_text).unwrap());
+
+                    // get the hashes of all of the parts in this object
+                    //
+                    // NOTE: There is a new GetObjectAttributes S3 API, but as of late August 2022
+                    // the AWS Rust SDK doesn't work right with it.  When callng it with multiple
+                    // object attributes, it fails with a signature mismatch error.  It seems
+                    // likely that the reason https://github.com/awslabs/aws-sdk-rust/issues/500
+                    // that was preventing the import of the latest S3 API model is probably to
+                    // blame.  As of now there is a `get_object_attributes` method in the Rust code
+                    // but it's broken so probably there's something in the S3 API model for this
+                    // function that isn't handled right in Rust.
+                    let mut parts = client
+                        .list_parts()
+                        .bucket(bucket)
+                        .key(&key)
+                        .into_paginator()
+                        .send();
+
+                    let mut hasher = sha2::Sha256::new();
+                    while let Some(page) = parts.try_next().await? {
+                        for part in page.parts.unwrap() {
+                            dbg!(part.part_number());
+
+                            let hash = base64::decode(part.checksum_sha256().unwrap())?;
+                            assert_eq!(hash.len(), sha2::Sha256::output_size());
+                            hasher.update(&hash);
+                            //hasher.update(object.checksum_sha256().unwrap().as_bytes());
+                        }
+                    }
+
+                    //for part in parts.parts().unwrap() {
+                    //    dbg!(part.part_number());
+                    //
+                    //    let hash = base64::decode(part.checksum_sha256().unwrap())?;
+                    //    assert_eq!(hash.len(), sha2::Sha256::output_size());
+                    //    hasher.update(&hash);
+                    //    //hasher.update(object.checksum_sha256().unwrap().as_bytes());
+                    //}
+
+                    // Computed the hash of all parts.
+                    let mut hash = [0u8; 32];
+
+                    hash.copy_from_slice(&hasher.finalize());
+                    hash
+                    */
+
+                    let response = client.get_object().bucket(bucket).key(&key).send().await?;
+
+                    let mut body = response.body;
+                    let mut hasher = sha2::Sha256::new();
+                    while let Some(bytes) = body.try_next().await? {
+                        hasher.update(bytes);
+                    }
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&hasher.finalize());
+                    hash
+                } else {
+                    // This is a simple hash
+
+                    // Decode into a binary hash and then compare
+                    let mut hash = [0u8; 32];
+
+                    hash.copy_from_slice(&base64::decode(object_hash).unwrap());
+                    hash
+                }
             }
             None => {
                 // XXX: Actually the above statement would be correct, except that minio still doesn't

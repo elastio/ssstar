@@ -4,6 +4,8 @@
 //!
 //! For all practical purposes each submodule here is a separate logical integration test fixture.
 //! See mod-level comments in those modules for more details.
+#[macro_use]
+extern crate dotenv_codegen;
 
 /// Test code that reports errors can just cheat and use `eyre`
 type Result<T> = color_eyre::Result<T>;

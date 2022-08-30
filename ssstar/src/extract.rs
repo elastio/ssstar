@@ -145,7 +145,7 @@ impl std::fmt::Debug for SourceArchiveInternal {
                 len,
             } => f
                 .debug_struct("ObjectStorage")
-                .field("bucket", &bucket)
+                .field("bucket", &bucket.name())
                 .field("key", &key)
                 .field("version_id", &version_id)
                 .field("len", &len)
@@ -456,8 +456,8 @@ impl ExtractArchiveJob {
     {
         let span = info_span!("run",
             source_archive = ?self.source_archive,
-            target_bucket = ?self.target_bucket,
-            target_prefix = ?self.target_prefix);
+            target_bucket = self.target_bucket.name(),
+            target_prefix = %self.target_prefix);
 
         async move {
             info!(?self.filters, ?self.archive_size, "Starting extract archive job");
@@ -535,12 +535,35 @@ impl ExtractArchiveJob {
 
             // Wait for both tasks to finish and only then look at results
             let (reader_result, processor_result) = futures::join!(reader_fut, processor_fut);
+            let reader_result =
+                reader_result.with_context(|_| crate::error::SpawnBlockingSnafu {})?;
+            let processor_result =
+                processor_result.with_context(|_| crate::error::SpawnSnafu {})?;
 
             // If there's an error in the reader, the processor can also fail but with a less
             // meaningful error.  So evaluate reader results first.
-            reader_result.with_context(|_| crate::error::SpawnBlockingSnafu {})??;
-            let (total_objects, total_object_bytes) =
-                processor_result.with_context(|_| crate::error::SpawnSnafu {})??;
+            //
+            // If the error indicates the sender mpsc was dropped, that's the queue to check the
+            // processor task's result instead
+            let (total_objects, total_object_bytes) = match reader_result {
+                Ok(_) => {
+                    // Good sign.  Only the processor can fail
+                    processor_result?
+                }
+                e @ Err(crate::S3TarError::TarExtractAborted) => {
+                    // This is the error the reader fails with when it got an error sending
+                    // something to the processor task.  This suggests the processor task has
+                    // failed.
+                    processor_result?;
+
+                    // `processor_result` wasn't an error, so return the reader error
+                    return e;
+                }
+                Err(e) => {
+                    // Any other error means the failure was on the reader's side
+                    return Err(e);
+                }
+            };
 
             progress.objects_uploaded(total_objects, total_object_bytes);
 
@@ -721,7 +744,7 @@ impl ExtractArchiveJob {
     /// reporting by the caller, since this function can't tell if `entry_receiver` stopped
     /// producing components because there is no more work to to, or because of an error in the
     /// reader.
-    #[instrument(skip(progress, entry_receiver))]
+    #[instrument(skip(target_bucket, progress, entry_receiver), fields(target_bucket = target_bucket.name()))]
     async fn process_tar_entries(
         target_bucket: Box<dyn Bucket>,
         target_prefix: String,
