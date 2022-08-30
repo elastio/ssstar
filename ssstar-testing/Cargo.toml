@@ -15,7 +15,8 @@ keywords = ["tar", "s3", "archive"]
 categories = ["command-line-utilities", "filesystem"]
 license = "Apache-2.0 OR MIT"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[badges]
+maintenance = { status = "experimental" }
 
 [dependencies]
 again = "0.1.2"

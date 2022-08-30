@@ -17,6 +17,9 @@ keywords = ["tar", "s3", "archive"]
 categories = ["command-line-utilities", "filesystem"]
 license = "Apache-2.0 OR MIT"
 
+[badges]
+maintenance = { status = "actively-developed" }
+
 [features]
 # Make the `config` struct a valid `clap` `Parser` impl so the config can be populated from the command line
 # This obvviously requires taking a dependency on `clap` so it should only be enabled in a CLI that is using clap
