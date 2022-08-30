@@ -1,7 +1,6 @@
 use crate::{create, Config, Result};
 use dyn_clone::DynClone;
-use once_cell::sync::OnceCell;
-use std::{any::Any, ops::Range, sync::Arc};
+use std::{any::Any, ops::Range};
 use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, oneshot};
 use url::Url;
@@ -144,44 +143,26 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
 dyn_clone::clone_trait_object!(Bucket);
 
 /// Singleton type which constructs [`ObjectStorage`] implementations on demand.
-///
-/// Note that each implementation is also a singleton, so no more than one instance will ever be
-/// created.
 #[derive(Debug)]
-pub(crate) struct ObjectStorageFactory {
-    config: Config,
-}
+pub(crate) struct ObjectStorageFactory;
 
 impl ObjectStorageFactory {
-    /// Get the ObjectStorageFactory instance, creating it if it doesn't already exist.
-    ///
-    /// Note that the `config` argument is ignored if a factory instance was previously created
-    /// with a prior call to this method.  It's not possible to have multiple configurations in use
-    /// in a single process.
-    pub fn instance(config: Config) -> Arc<Self> {
-        static INSTANCE: OnceCell<Arc<ObjectStorageFactory>> = OnceCell::new();
-
-        INSTANCE
-            .get_or_init(move || Arc::new(Self { config }))
-            .clone()
-    }
-
     /// Given the URL to an object storage bucket, prefix, or object, determine which
     /// implementation handles that particular object storage technology and return an instance of
     /// it.
     ///
     /// If the URL isn't recognized as being supported by ssstar, an error is returned
     #[allow(clippy::wrong_self_convention)] // For a factory object I think it's obvious what this means
-    pub async fn from_url(&self, url: &Url) -> Result<Box<dyn ObjectStorage>> {
+    pub async fn from_url(config: Config, url: &Url) -> Result<Box<dyn ObjectStorage>> {
         if url.scheme() == "s3" {
-            Ok(self.s3().await)
+            Ok(Self::s3(config).await)
         } else {
             crate::error::UnsupportedObjectStorageSnafu { url: url.clone() }.fail()
         }
     }
 
     /// Return a [`ObjectStorage`] implementation for S3 or an S3-compatible API
-    pub async fn s3(&self) -> Box<dyn ObjectStorage> {
+    pub async fn s3(config: Config) -> Box<dyn ObjectStorage> {
         // NOTE: Earlier versions of this code used a `OnceCell` object to lazily create just one
         // `S3` instance for the entire process.  This unfortunately won't work when in cases where
         // multiple tokio runtimes are in use, such as for example in Rust tests.  Each `Client`
@@ -191,6 +172,6 @@ impl ObjectStorageFactory {
         //
         // The bug in question is https://github.com/hyperium/hyper/issues/2892, and it seems not
         // likely to be fixed any time soon.
-        Box::new(s3::S3::new(self.config.clone()).await)
+        Box::new(s3::S3::new(config.clone()).await)
     }
 }

@@ -305,7 +305,6 @@ struct InputObjectPart {
 #[derive(Debug)]
 pub struct CreateArchiveJobBuilder {
     config: Config,
-    objstore_factory: Arc<ObjectStorageFactory>,
     target: TargetArchive,
     inputs: Vec<CreateArchiveInput>,
 }
@@ -314,7 +313,6 @@ impl CreateArchiveJobBuilder {
     /// Initialize a new create archive job builder, but don't yet start the job.
     pub fn new(config: Config, target: TargetArchive) -> Self {
         Self {
-            objstore_factory: ObjectStorageFactory::instance(config.clone()),
             config,
             target,
             inputs: vec![],
@@ -330,7 +328,7 @@ impl CreateArchiveJobBuilder {
         debug!(url = %input, "Adding archive input");
 
         // From the URL determine what object storage provider to use for this particular input
-        let objstore = self.objstore_factory.from_url(input).await?;
+        let objstore = ObjectStorageFactory::from_url(self.config.clone(), input).await?;
 
         // Validate the bucket and extract it from the URL
         let (bucket, key, _version_id) = objstore.parse_url(input).await?;
@@ -397,7 +395,6 @@ impl CreateArchiveJobBuilder {
 
         Ok(CreateArchiveJob {
             config: self.config,
-            objstore_factory: self.objstore_factory,
             target: self.target,
             inputs,
         })
@@ -561,7 +558,6 @@ pub trait CreateProgressCallback: Sync + Send {
 #[derive(Debug)]
 pub struct CreateArchiveJob {
     config: Config,
-    objstore_factory: Arc<ObjectStorageFactory>,
     target: TargetArchive,
     inputs: Vec<InputObject>,
 }
@@ -632,7 +628,7 @@ impl CreateArchiveJob {
         ) = match self.target {
             TargetArchive::ObjectStorage(url) => {
                 // Validate the URL and get the components of the URL in the bargain
-                let objstore = self.objstore_factory.from_url(&url).await?;
+                let objstore = ObjectStorageFactory::from_url(self.config.clone(), &url).await?;
 
                 let (bucket, key, _) = objstore.parse_url(&url).await?;
 

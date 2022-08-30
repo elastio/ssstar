@@ -79,14 +79,11 @@ impl std::fmt::Debug for SourceArchive {
 impl SourceArchive {
     /// Obtain more details about the archive source and convert this into a
     /// [`SourceArchiveInternal`]
-    #[instrument(skip(objstore_factory))]
-    async fn into_internal(
-        self,
-        objstore_factory: Arc<ObjectStorageFactory>,
-    ) -> Result<SourceArchiveInternal> {
+    #[instrument(skip(config))]
+    async fn into_internal(self, config: Config) -> Result<SourceArchiveInternal> {
         match self {
             Self::ObjectStorage(url) => {
-                let objstore = objstore_factory.from_url(&url).await?;
+                let objstore = ObjectStorageFactory::from_url(config, &url).await?;
                 let (bucket, key, version_id) = objstore.parse_url(&url).await?;
 
                 let key = key.ok_or_else(|| {
@@ -299,7 +296,6 @@ impl ExtractFilter {
 #[derive(Debug)]
 pub struct ExtractArchiveJobBuilder {
     config: Config,
-    objstore_factory: Arc<ObjectStorageFactory>,
     source_archive: SourceArchive,
     target_bucket: Box<dyn Bucket>,
     target_prefix: String,
@@ -308,14 +304,12 @@ pub struct ExtractArchiveJobBuilder {
 
 impl ExtractArchiveJobBuilder {
     pub async fn new(config: Config, source: SourceArchive, target: Url) -> Result<Self> {
-        let objstore_factory = ObjectStorageFactory::instance(config.clone());
-        let objstore = objstore_factory.from_url(&target).await?;
+        let objstore = ObjectStorageFactory::from_url(config.clone(), &target).await?;
 
         let (bucket, key, _) = objstore.parse_url(&target).await?;
 
         Ok(Self {
             config,
-            objstore_factory,
             source_archive: source,
             target_bucket: bucket,
             target_prefix: key.unwrap_or_default(),
@@ -333,7 +327,7 @@ impl ExtractArchiveJobBuilder {
         // Validate the source archive by actually getting its metadata
         let source_archive = self
             .source_archive
-            .into_internal(self.objstore_factory)
+            .into_internal(self.config.clone())
             .await?;
 
         // For progress estimation purposes it's helpful to know how large the archive we're going
