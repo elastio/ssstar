@@ -704,7 +704,13 @@ impl TestExtractProgressCallback {
         let (objects_skipped, object_bytes_skipped) = self.extract_object_skipped();
         let (objects_extracted, object_bytes_extracted) = self.extract_object_finished();
 
-        let (total_objects_extracted, total_object_bytes_extracted, total_objects_skipped, total_object_bytes_skipped, _) = self.extract_finished();
+        let (
+            total_objects_extracted,
+            total_object_bytes_extracted,
+            total_objects_skipped,
+            total_object_bytes_skipped,
+            _,
+        ) = self.extract_finished();
 
         assert_eq!(objects_skipped, total_objects_skipped);
         assert_eq!(object_bytes_skipped, total_object_bytes_skipped);
@@ -718,11 +724,17 @@ impl TestExtractProgressCallback {
         assert_eq!(total_object_bytes_extracted, object_part_bytes_read);
 
         // The size and count of the object starting and object finished events should match
-        assert_eq!(self.extract_object_starting(), self.extract_object_finished());
+        assert_eq!(
+            self.extract_object_starting(),
+            self.extract_object_finished()
+        );
 
         // Since we only extract objects which should be uploaded, the extract starting and
         // finished totals should exactly match the upload starting and uploaded totals.
-        assert_eq!(self.extract_object_starting(), self.object_upload_starting());
+        assert_eq!(
+            self.extract_object_starting(),
+            self.object_upload_starting()
+        );
         assert_eq!(self.extract_object_finished(), self.object_uploaded());
 
         // The number and size of objects uploaded should match the final message
@@ -766,8 +778,7 @@ impl TestExtractProgressCallback {
 
     /// The number of extract object skipped, and the total size of all of them combined
     pub fn extract_object_skipped(&self) -> (usize, u64) {
-        let events =
-            self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectSkipped);
+        let events = self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectSkipped);
         let count = events.len();
         let sum = events
             .into_iter()
@@ -803,8 +814,7 @@ impl TestExtractProgressCallback {
 
     /// The number of extract object part read events, and the total size of all of them combined
     pub fn extract_object_part_read(&self) -> (usize, u64) {
-        let events =
-            self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectPartRead);
+        let events = self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectPartRead);
         let count = events.len();
         let sum = events
             .into_iter()
@@ -822,8 +832,7 @@ impl TestExtractProgressCallback {
 
     /// The number of extract object finished events, and the total size of all of them combined
     pub fn extract_object_finished(&self) -> (usize, u64) {
-        let events =
-            self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectFinished);
+        let events = self.filter_events(ExtractProgressEventDiscriminants::ExtractObjectFinished);
         let count = events.len();
         let sum = events
             .into_iter()
@@ -866,7 +875,7 @@ impl TestExtractProgressCallback {
                     extracted_object_bytes,
                     skipped_objects,
                     skipped_object_bytes,
-                    total_bytes
+                    total_bytes,
                 )
             }
         )
@@ -915,11 +924,9 @@ impl TestExtractProgressCallback {
         let sum = events
             .into_iter()
             .map(|event| {
-                with_match!(
-                    event,
-                    ExtractProgressEvent::ObjectUploaded { size, .. },
-                    { size }
-                )
+                with_match!(event, ExtractProgressEvent::ObjectUploaded { size, .. }, {
+                    size
+                })
             })
             .sum();
 
@@ -934,7 +941,8 @@ impl TestExtractProgressCallback {
         with_match!(
             event,
             ExtractProgressEvent::ObjectsUploaded {
-                total_objects, total_object_bytes
+                total_objects,
+                total_object_bytes
             },
             { (total_objects, total_object_bytes) }
         )
