@@ -522,11 +522,11 @@ impl S3Bucket {
 
                 // A non-service error, or a service error that isn't not found, should be
                 // reported as a generic HeadObject error
-                return crate::error::HeadObjectSnafu {
+                crate::error::HeadObjectSnafu {
                     bucket: self.inner.name.clone(),
                     key: key.to_string(),
                 }
-                .into_error(err);
+                .into_error(err)
             })
     }
 
@@ -767,9 +767,9 @@ impl Bucket for S3Bucket {
                     // expression characters escaped.  That obviously will be different than the
                     // original pattern expression.  So the longest common prefix between the two
                     // is the part that has no match pattern characters
-                    let escaped = glob::Pattern::escape(&pattern);
+                    let escaped = glob::Pattern::escape(pattern);
 
-                    longest_common_prefix(&pattern, &escaped)
+                    longest_common_prefix(pattern, &escaped)
                         .map(|s| s.to_owned())
                         .unwrap_or_default()
                 };
@@ -820,7 +820,7 @@ impl Bucket for S3Bucket {
                             // just an artifact of the machine-generated Rust bindings
                             let key = object.key().expect("Objects must have keys");
 
-                            pattern.matches_with(key, match_options.clone())
+                            pattern.matches_with(key, match_options)
                         })
                         .collect::<Vec<_>>();
 
@@ -1171,7 +1171,7 @@ async fn make_s3_client(config: &Config, region: impl Into<Option<String>>) -> a
 }
 
 /// Find the longest common prefix shared by two string slices.
-fn longest_common_prefix<'a, 'b>(a: &'a str, b: &'a str) -> Option<&'a str> {
+fn longest_common_prefix<'a, 'b>(a: &'a str, b: &'b str) -> Option<&'a str> {
     if a.is_empty() {
         return None;
     }
@@ -1199,14 +1199,13 @@ mod tests {
 
     /// Set up the ssstar config to use the specified Minio server
     fn config_for_minio(server: &minio::MinioServer) -> crate::Config {
-        let mut config = crate::Config::default();
-
-        config.aws_region = Some("us-east-1".to_string());
-        config.aws_access_key_id = Some("minioadmin".to_string());
-        config.aws_secret_access_key = Some("minioadmin".to_string());
-        config.s3_endpoint = Some(server.endpoint_url());
-
-        config
+        crate::Config {
+            aws_region: Some("us-east-1".to_string()),
+            aws_access_key_id: Some("minioadmin".to_string()),
+            aws_secret_access_key: Some("minioadmin".to_string()),
+            s3_endpoint: Some(server.endpoint_url()),
+            ..Default::default()
+        }
     }
 
     /// Make an [`S3Bucket`] instance which talks to a bucket stored on a local Minio server

@@ -258,7 +258,7 @@ impl FromStr for ExtractFilter {
                     }
                 })?,
             })
-        } else if s.ends_with("/") {
+        } else if s.ends_with('/') {
             // This is a prefix
             Ok(Self::Prefix {
                 prefix: s.to_string(),
@@ -279,7 +279,7 @@ impl ExtractFilter {
     fn matches(&self, path: &Path) -> bool {
         match self {
             Self::Object { key } => path.to_string_lossy() == key.as_ref(),
-            Self::Prefix { prefix } => path.to_string_lossy().starts_with(&*prefix),
+            Self::Prefix { prefix } => path.to_string_lossy().starts_with(&**prefix),
             Self::Glob { pattern } => {
                 // To make sure the glob matching behaviors like it does in unix shells, require
                 // that `/` path separator chars must be matched by literal `/` and will never be
@@ -581,7 +581,7 @@ impl ExtractArchiveJob {
         filters: Vec<ExtractFilter>,
         reader: CountingReader<Box<dyn Read + Send>>,
         progress: Arc<dyn ExtractProgressCallback>,
-        mut entry_sender: mpsc::Sender<TarEntryComponent>,
+        entry_sender: mpsc::Sender<TarEntryComponent>,
         multipart_threshold: usize,
         multipart_chunk_size: usize,
     ) -> Result<()> {
@@ -619,14 +619,12 @@ impl ExtractArchiveJob {
             let included = if filters.is_empty() {
                 debug!("No filters are applied so this entry is included");
                 true
+            } else if let Some(filter) = filters.iter().find(|filter| filter.matches(&path)) {
+                debug!(?filter, "Filter matched so this entry is included");
+                true
             } else {
-                if let Some(filter) = filters.iter().find(|filter| filter.matches(&path)) {
-                    debug!(?filter, "Filter matched so this entry is included");
-                    true
-                } else {
-                    debug!("No filters matched, so this entry is excluded");
-                    false
-                }
+                debug!("No filters matched, so this entry is excluded");
+                false
             };
 
             if !included {
@@ -652,16 +650,13 @@ impl ExtractArchiveJob {
                 extracted_objects += 1;
                 extracted_object_bytes += len;
 
-                Self::send_component(
-                    TarEntryComponent::SmallFile { path, data },
-                    &mut entry_sender,
-                )?;
+                Self::send_component(TarEntryComponent::SmallFile { path, data }, &entry_sender)?;
             } else {
                 // This file is big enough that it's worth breaking up into multipart chunks
                 debug!("Processing entry as multi-part");
                 Self::send_component(
                     TarEntryComponent::StartMultipartFile { path, len },
-                    &mut entry_sender,
+                    &entry_sender,
                 )?;
 
                 // NOTE: don't confuse the concept of multipart in this module with the object
@@ -687,7 +682,7 @@ impl ExtractArchiveJob {
                         TarEntryComponent::EndMultipartFile { data }
                     };
 
-                    Self::send_component(component, &mut entry_sender)?;
+                    Self::send_component(component, &entry_sender)?;
                 }
 
                 progress.extract_object_finished(&key, len);

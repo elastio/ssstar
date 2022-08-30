@@ -63,7 +63,7 @@ async fn run_test(test_data: Vec<test_data::TestObject>) -> Result<()> {
 
     // There should be a SHA256 hash computed on the tar archive.  Minio doesn't support that
     // but live S3 does
-    let archive_key = archive_url.path().strip_prefix("/").unwrap();
+    let archive_key = archive_url.path().strip_prefix('/').unwrap();
     let object = client
         .head_object()
         .bucket(TEST_BUCKET)

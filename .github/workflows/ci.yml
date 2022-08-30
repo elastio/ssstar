@@ -21,10 +21,25 @@ jobs:
           profile: minimal
           override: true
       - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
+      - name: Install minio
+        shell: bash
+        run: |
+          mkdir -p $HOME/.local/bin
+          cd $HOME/.local/bin
+          wget https://dl.min.io/server/minio/release/darwin-amd64/minio
+          chmod +x minio
+          echo ::add-path::$HOME/.local/bin
+      - name: Run local tests
+        uses: actions-rs/cargo@v1
         with:
           command: test
           args: --all-features --workspace
+
+      - name: Run S3 tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features --workspace --ignored
 
   rustfmt:
     name: Rustfmt
@@ -103,7 +118,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: publish
-          args: --dry-run
+          args: --dry-run -p ssstar
 
   coverage:
     name: Code coverage
@@ -118,6 +133,14 @@ jobs:
           profile: minimal
           override: true
       - uses: Swatinem/rust-cache@v1
+      - name: Install minio
+        shell: bash
+        run: |
+          mkdir -p $HOME/.local/bin
+          cd $HOME/.local/bin
+          wget https://dl.min.io/server/minio/release/darwin-amd64/minio
+          chmod +x minio
+          echo ::add-path::$HOME/.local/bin
       - name: Run cargo-tarpaulin
         uses: actions-rs/tarpaulin@v0.1
         with:

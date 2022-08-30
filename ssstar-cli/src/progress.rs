@@ -406,7 +406,7 @@ impl ssstar::ExtractProgressCallback for ExtractProgressReport {
     fn extract_object_starting(&self, key: &str, size: u64) {
         self.extract_object.set_position(0);
         self.extract_object.set_length(size);
-        self.extract_object.set_message(format!("{key}"));
+        self.extract_object.set_message(key.to_string());
     }
 
     fn extract_object_part_read(&self, key: &str, bytes: usize) {
@@ -455,7 +455,7 @@ impl ssstar::ExtractProgressCallback for ExtractProgressReport {
     fn object_upload_starting(&self, key: &str, size: u64) {
         self.upload_object.set_position(0);
         self.upload_object.set_length(size);
-        self.upload_object.set_message(format!("{key}"));
+        self.extract_object.set_message(key.to_string());
     }
 
     fn object_part_uploaded(&self, key: &str, bytes: usize) {

@@ -147,17 +147,13 @@ impl CreateArchiveInput {
                     // by the object store impl itself though
                     Ok(Self {
                         bucket,
-                        selector: ObjectSelector::Glob {
-                            pattern: key.to_string(),
-                        },
+                        selector: ObjectSelector::Glob { pattern: key },
                     })
                 } else if key.ends_with('/') {
                     // Looks like a prefix
                     Ok(Self {
                         bucket,
-                        selector: ObjectSelector::Prefix {
-                            prefix: key.to_string(),
-                        },
+                        selector: ObjectSelector::Prefix { prefix: key },
                     })
                 } else {
                     // The only remaining possibility is that it's a single object key
@@ -165,7 +161,7 @@ impl CreateArchiveInput {
                         bucket,
 
                         selector: ObjectSelector::Object {
-                            key: key.to_string(),
+                            key,
 
                             // For now this will always be None.
                             // TODO: How can the version ID be specified in the S3 URL?
@@ -337,7 +333,7 @@ impl CreateArchiveJobBuilder {
         let objstore = self.objstore_factory.from_url(input).await?;
 
         // Validate the bucket and extract it from the URL
-        let (bucket, key, _version_id) = objstore.parse_url(&input).await?;
+        let (bucket, key, _version_id) = objstore.parse_url(input).await?;
         debug!(url = %input, ?bucket, "Confirmed bucket access for input");
 
         // Parse the path component of the URL into an archive input
