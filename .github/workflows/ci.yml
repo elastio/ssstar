@@ -91,9 +91,9 @@ jobs:
     strategy:
       matrix:
         os:
-          - macos-latest
           - ubuntu-latest
           - windows-latest
+          - macos-latest
     runs-on: ${{ matrix.os }}
 
     env:
@@ -148,7 +148,7 @@ jobs:
           mkdir -p C:\minio
           Invoke-WebRequest -Uri "https://dl.min.io/server/minio/release/windows-amd64/minio.exe" -OutFile "C:\minio\minio.exe"
           echo "C:\minio" >> $GITHUB_PATH
-        if: matrix.os == 'windows'
+        if: matrix.os == 'windows-latest'
 
       - name: Run local tests
         uses: actions-rs/cargo@v1
