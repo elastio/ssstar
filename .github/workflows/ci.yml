@@ -28,7 +28,6 @@ jobs:
           cd $HOME/.local/bin
           wget https://dl.min.io/server/minio/release/linux-amd64/minio
           chmod +x minio
-          mv minio $HOME/.local/bin
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Run local tests
         uses: actions-rs/cargo@v1
@@ -141,7 +140,6 @@ jobs:
           cd $HOME/.local/bin
           wget https://dl.min.io/server/minio/release/linux-amd64/minio
           chmod +x minio
-          mv minio $HOME/.local/bin
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Run cargo-tarpaulin
         uses: actions-rs/tarpaulin@v0.1
