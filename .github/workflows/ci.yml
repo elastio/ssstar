@@ -147,7 +147,7 @@ jobs:
           # Download the minio binary if it's not already present
           mkdir -p C:\minio
           Invoke-WebRequest -Uri "https://dl.min.io/server/minio/release/windows-amd64/minio.exe" -OutFile "C:\minio\minio.exe"
-          echo "C:\minio" >> $GITHUB_PATH
+          echo "c:\minio" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         if: matrix.os == 'windows-latest'
 
       - name: Run local tests
