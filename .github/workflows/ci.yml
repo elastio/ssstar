@@ -7,35 +7,30 @@ on:
   pull_request:
 
 jobs:
-  cargo-deny:
+  cargo-checks:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - uses: EmbarkStudios/cargo-deny-action@v1
-
-  cargo-udeps:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          profile: minimal
-          override: true
-      - name: Install cargo-udeps
-        shell: bash
-        run: |
-          wget  \
-            --output-file cargo-udeps.tar.gz \
-            --tries=10 --retry-connrefused \
-            https://github.com/est31/cargo-udeps/releases/download/v0.1.32/cargo-udeps-v0.1.32-x86_64-unknown-linux-gnu.tar.gz
-          tar xvzf  cargo-udeps-v0.1.32-x86_64-unknown-linux-gnu.tar.gz --strip-components=2
-          mv cargo-udeps $HOME/.cargo/bin/
-
-      - name: Check for unused dependencies
-        shell: bash
-        run: |
-          cargo udeps
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        profile: minimal
+        override: true
+    - name: Install cargo-udeps
+      shell: bash
+      run: |
+        wget  \
+          --output-file cargo-udeps.tar.gz \
+          --tries=10 --retry-connrefused \
+          https://github.com/est31/cargo-udeps/releases/download/v0.1.32/cargo-udeps-v0.1.32-x86_64-unknown-linux-gnu.tar.gz
+        tar xvzf  cargo-udeps-v0.1.32-x86_64-unknown-linux-gnu.tar.gz --strip-components=2
+        mv cargo-udeps $HOME/.cargo/bin/
+    - name: Check for unused dependencies
+      shell: bash
+      run: |
+        cargo udeps
 
   rustfmt:
     name: Rustfmt
