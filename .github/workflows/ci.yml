@@ -16,7 +16,7 @@ jobs:
     - uses: actions/checkout@v2
     - uses: EmbarkStudios/cargo-deny-action@v1
       with:
-        arguments: --all-features --all-targets
+        arguments: --all-features
         command: check advisories
 
   # Do all possible static checks here
@@ -32,7 +32,7 @@ jobs:
         override: true
     - uses: EmbarkStudios/cargo-deny-action@v1
       with:
-        arguments: --all-features --all-targets
+        arguments: --all-features
         command: check bans licenses sources
     - name: Install cargo-udeps
       shell: bash
