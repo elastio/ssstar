@@ -30,6 +30,7 @@ jobs:
         toolchain: nightly
         profile: minimal
         override: true
+    - uses: Swatinem/rust-cache@v1
     - uses: EmbarkStudios/cargo-deny-action@v1
       with:
         arguments: --all-features
@@ -49,7 +50,6 @@ jobs:
         cargo +nightly udeps
 
   rustfmt:
-    name: Rustfmt
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -57,7 +57,6 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
           profile: minimal
           override: true
           components: rustfmt
@@ -69,7 +68,6 @@ jobs:
           args: --all -- --check
 
   clippy:
-    name: Clippy
     needs: rustfmt
     runs-on: ubuntu-latest
     steps:
@@ -78,7 +76,6 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
           profile: minimal
           override: true
           components: clippy
@@ -90,9 +87,15 @@ jobs:
           args: --all-targets --all-features --workspace -- -D warnings
 
   test:
-    name: Test Suite
     needs: clippy
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -102,7 +105,6 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
           profile: minimal
           override: true
       - uses: Swatinem/rust-cache@v1
@@ -112,7 +114,7 @@ jobs:
         with:
           path: ~/.local/bin
           key: ${{ runner.os }}-minio
-      - name: Install minio
+      - name: Install minio (Linux)
         shell: bash
         run: |
           # Download the minio binary if it's not already present
@@ -125,6 +127,28 @@ jobs:
             chmod +x minio
           fi
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+        if: ${{ runner.os == "ubuntu-latest" }}
+      - name: Install minio (mac)
+        shell: bash
+        run: |
+          # Download the minio binary if it's not already present
+          # Most of the time the minio binary should be in the cache and doesn't need to be downloaded again
+          mkdir -p $HOME/.local/bin
+          cd $HOME/.local/bin
+          if [[ ! -x ./minio ]]
+            curl --progress-bar -O https://dl.min.io/server/minio/release/darwin-amd64/minio
+            chmod +x minio
+          fi
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+        if: ${{ runner.os == "macos-latest" }}
+      - name: Install minio (Windows)
+        run: |
+          # Download the minio binary if it's not already present
+          mkdir -p C:\minio
+          Invoke-WebRequest -Uri "https://dl.min.io/server/minio/release/windows-amd64/minio.exe" -OutFile "C:\minio\minio.exe"
+          echo "C:\minio" >> $GITHUB_PATH
+        if: ${{ runner.os == "windows" }}
+
       - name: Run local tests
         uses: actions-rs/cargo@v1
         with:
@@ -138,7 +162,6 @@ jobs:
           args: --all-features --workspace -- --ignored
 
   docs:
-    name: Docs
     needs: clippy
     runs-on: ubuntu-latest
     steps:
@@ -160,7 +183,6 @@ jobs:
           args: --no-deps --document-private-items --all-features --workspace --examples
 
   coverage:
-    name: Code coverage
     needs: test
     runs-on: ubuntu-latest
     steps:
