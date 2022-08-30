@@ -49,6 +49,27 @@ notice = "warn"
 # output a note when they are encountered.
 ignore = [
     #"RUSTSEC-0000-0000",
+
+    # tempdir works fine and is only used in test code.  No immediate urgency to update to tempfile
+    "RUSTSEC-2018-0017",
+
+    # We only use dotenv in tests, not in production, so this advisory doesn't apply
+    "RUSTSEC-2021-0142",
+
+    # This is a dependency of the AWS SDK crates, we can't control it
+    "RUSTSEC-2022-0049",
+
+    # We should probably update to dotenvy, but we use dotenv only in test code so there's
+    # no immediate urgency
+    "RUSTSEC-2021-0141",
+
+    # Unfortunately ansi-term isn't a direct dependency, it comes via tracing-subscriber, so
+    # hopefully that team updates to a maintained crate in the futures
+    "RUSTSEC-2021-0139",
+
+    # This `time` UB seems to be a gross over-reaction.  Anyway this is a transitive dependency via chrono,
+    # we are not able to update directly
+    "RUSTSEC-2020-0071",
 ]
 # Threshold for security vulnerabilities, any vulnerability with a CVSS score
 # lower than the range specified will be ignored. Note that ignored advisories

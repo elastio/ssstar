@@ -46,7 +46,7 @@ jobs:
     - name: Check for unused dependencies
       shell: bash
       run: |
-        cargo udeps
+        cargo +nightly udeps
 
   rustfmt:
     name: Rustfmt
