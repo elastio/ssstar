@@ -16,4 +16,4 @@ dev-version = true
 dependent-version = "upgrade"
 
 # We want a single tag for all of the crates
-tag-name = "{{version}}"
+tag-name = "v{{version}}"
