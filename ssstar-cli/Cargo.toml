@@ -39,4 +39,4 @@ futures = "0.3.21"
 indicatif = "0.17.0"
 
 [build-dependencies]
-vergen = "7.4.0"
+vergen = "7.4.2"
