@@ -2045,6 +2045,7 @@ dependencies = [
  "again",
  "aws-config",
  "aws-sdk-s3",
+ "aws-types",
  "base64",
  "byte-unit",
  "bytes",

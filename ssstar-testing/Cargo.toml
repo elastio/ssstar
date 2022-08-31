@@ -26,6 +26,7 @@ shared-version = true
 again = "0.1.2"
 aws-config = "0.47.0"
 aws-sdk-s3 = { version = "0.17.0" }
+aws-types = { version = "0.47.0", features = ["hardcoded-credentials"] }
 base64 = "0.13.0"
 byte-unit = "4.0.14"
 bytes = "1.2.1"
@@ -43,7 +44,7 @@ strum = { version = "0.24.1", features = ["derive"] }
 tar = "0.4.38"
 tempdir = "0.3.7"
 tokio = { version = "1.20.1", features = ["full"] }
-tokio-util = { version = "0.7.3", features = ["io"] }
+tokio-util = { version = "0.7.3", features = ["io", "io-util"] }
 tracing = "0.1.36"
 tracing-appender = "0.2.2"
 tracing-subscriber = "0.3.15"
