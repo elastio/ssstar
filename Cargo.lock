@@ -2040,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "ssstar-testing"
-version = "0.1.0"
+version = "0.1.1-dev"
 dependencies = [
  "again",
  "aws-config",
