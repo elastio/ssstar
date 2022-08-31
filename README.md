@@ -114,7 +114,7 @@ ssstar create s3://my-source-bucket/ --stdout \
 
 ```shell
 # Restore a recovery point with ID `$RP_ID` from Elastio to the `my-destination-bucket` bucket:
-elastio stream restore --rp-id $RP_ID \
+elastio stream restore --rp $RP_ID \
   | ssstar extract --stdin s3://my-destination-bucket
 ```
 
