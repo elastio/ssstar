@@ -12,7 +12,6 @@ jobs:
     runs-on: ${{ matrix.job.os }}
     strategy:
       matrix:
-        rust: [stable]
         job:
           - os: macos-latest
             os-name: macos
@@ -51,7 +50,6 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: ${{ matrix.rust }}
           profile: minimal
           override: true
       - uses: Swatinem/rust-cache@v1
@@ -104,6 +102,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-cargo:
+    # Unfortunately `cargo-release` seems to not be smart enough to look at `dev-dependencies` when deciding 
+    # in what order to publish crates, so we can't let it perform the actual publishing.  Need to do that manually.
+    #
+    # However the tag that this build runs on was produced by `cargo release`, so all of the versions are set correctly
+    # and everything is in place to proceed with publishing
     name: Publishing to Cargo
     runs-on: ubuntu-latest
     steps:
@@ -111,10 +114,13 @@ jobs:
         uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
           profile: minimal
           override: true
       - uses: Swatinem/rust-cache@v1
+      - uses: actions-rs/cargo@v1
+        with:
+          command: publish
+          args: --token ${{ secrets.CARGO_API_KEY }} -p ssstar-testing
       - uses: actions-rs/cargo@v1
         with:
           command: publish
