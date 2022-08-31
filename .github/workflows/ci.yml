@@ -183,11 +183,12 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target x86_64-unknown-linux-musl
+          args: --release --target x86_64-unknown-linux-musl --package ssstar-cli
         env:
           RUSTFLAGS: '-C target-feature=+crt-static'
       - name: Test static binary
         run: |
+          find . -name ssstar
           target/x86_64-unknown-linux-musl/ssstar --version
 
   docs:
