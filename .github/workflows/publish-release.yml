@@ -88,7 +88,6 @@ jobs:
           else
             shasum -a 256 $RELEASE_NAME.tar.gz > $RELEASE_NAME.sha256
           fi
-      # Assets will be published to GitHub releases only if this is a release tag
       - name: Releasing assets
         uses: softprops/action-gh-release@v1
         with:
@@ -97,4 +96,3 @@ jobs:
             target/${{ matrix.job.target }}/release/ssstar-*.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        if: startsWith(github.ref, "refs/tags/v")

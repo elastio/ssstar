@@ -1,0 +1,43 @@
+name: Publish crates to crates.io
+
+on:
+  push:
+    tags:
+      - '[v]?[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  publish-cargo:
+    # Unfortunately `cargo-release` seems to not be smart enough to look at `dev-dependencies` when deciding
+    # in what order to publish crates, so we can't let it perform the actual publishing.  Need to do that manually.
+    #
+    # However the tag that this build runs on was produced by `cargo release`, so all of the versions are set correctly
+    # and everything is in place to proceed with publishing
+    name: Publishing to Cargo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+      - name: Publish ssstar-testing
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+          args: --token ${{ secrets.CARGO_API_KEY }} -p ssstar-testing
+      - name: Sleep while crates.io processes ssstar-testing
+        run: sleep 60
+      - name: Publish ssstar
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+          args: --token ${{ secrets.CARGO_API_KEY }} -p ssstar
+      - name: Sleep while crates.io processes ssstar
+        run: sleep 60
+      - name: Publish ssstar-cli
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+          args: --token ${{ secrets.CARGO_API_KEY }} -p ssstar-cli

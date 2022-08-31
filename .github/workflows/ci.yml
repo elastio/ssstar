@@ -162,6 +162,31 @@ jobs:
           command: test
           args: --all-features --workspace -- --ignored
 
+  # Even on PR builds, verify that static compilation works and that the resulting executable
+  # can run.  It's easy to add crate dependencies which break static builds
+  build-static:
+    needs: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          target: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v1
+      - name: Cargo build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target x86_64-unknown-linux-musl
+        env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
+      - name: Test static binary
+        run: |
+          target/x86_64-unknown-linux-musl/ssstar --version
+
   docs:
     needs: clippy
     runs-on: ubuntu-latest
