@@ -1,6 +1,6 @@
 [package]
 name = "ssstar-cli"
-version = "0.1.0"
+version = "0.1.0-dev"
 edition = "2021"
 authors = ["Adam Nelson <adam@elastio.com>"]
 description = """
@@ -16,13 +16,17 @@ license = "Apache-2.0 OR MIT"
 [badges]
 maintenance = { status = "actively-developed" }
 
+[package.metadata.release]
+# All crates share the same version and should be incremented together
+shared-version = true
+
 [[bin]]
 bench = false
 path = "src/main.rs"
 name = "ssstar"
 
 [dependencies]
-ssstar = {version = "0.1.0", path = "../ssstar", features = ["clap"] }
+ssstar = {version = "0.1.0-dev", path = "../ssstar", features = ["clap"] }
 clap = {version = "3.2.16", features = ["derive"]}
 url = "2.2.2"
 byte-unit = "4.0.14"

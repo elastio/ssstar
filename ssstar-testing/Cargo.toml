@@ -1,6 +1,6 @@
 [package]
 name = "ssstar-testing"
-version = "0.1.0"
+version = "0.1.0-dev"
 edition = "2021"
 authors = ["Adam Nelson <adam@elastio.com>"]
 description = """
@@ -17,6 +17,10 @@ license = "Apache-2.0 OR MIT"
 
 [badges]
 maintenance = { status = "experimental" }
+
+[package.metadata.release]
+# All crates share the same version and should be incremented together
+shared-version = true
 
 [dependencies]
 again = "0.1.2"

@@ -1,0 +1,12 @@
+# cargo release config
+
+# all of the crates are versioned and published together, even if some haven't changed
+shared-version = true
+
+# when releasing the workspace consolidate commit and push operations into one
+consolidate-commits = true
+consolidate-pushes = true
+
+# the suffix to append to the code in `master` after a release
+dev-version-ext = "dev"
+

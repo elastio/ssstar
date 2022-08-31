@@ -1,0 +1,9 @@
+# cargo release config specifically for `sssstar` crate
+
+[[pre-release-replacements]]
+file = "../README.md"
+search = "ssstar = \"[\\d\\.]+\""
+replace = "ssstar = \"{{ version }}\""
+# Don't do this replacement when the version is a development version
+prerelease = false
+
