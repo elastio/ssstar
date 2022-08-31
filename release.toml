@@ -14,3 +14,6 @@ dev-version = true
 # Update versions of dependencies so they always have the same version
 # Seems like that should be the default but oh well
 dependent-version = "upgrade"
+
+# We want a single tag for all of the crates
+tag-name = "{{version}}"
