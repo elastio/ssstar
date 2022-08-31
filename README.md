@@ -20,6 +20,20 @@ We built `ssstar` so our customers using the `elastio` cloud native backup and r
 buckets directly into and from [Elastio](https://elastio.com/) vaults, however we made the tool generic enough that it can be used by itself
 whenever you need to package one or more S3 objects into a tarball.
 
+## Installation
+
+### Cargo
+
+On any supported platform (meaning Windows, macOS (both Intel and Apple Silicon) and Linux), if you have a recent Rust
+compiler installed you can use `cargo install` to get the ssstar CLI:
+
+* Ensure you have at least Rust 1.63.0 installed by following [this](https://www.rust-lang.org/tools/install) guide.
+* Run `cargo install ssstar-cli --locked` to compile `ssstar` from source and install locally.
+
+### Precompiled binaries
+
+See the [GitHub Releases](releases) for pre-compiled binaries for Windows, mac, and Linux.
+
 ## Usage (without Elastio)
 
 To create a tar archive, you specify S3 buckets, objects, entire prefixes, or globs, as well as where you want the tar
@@ -162,45 +176,6 @@ ssstar = "0.1.3"
 See the [docs.rs](https://docs.rs/ssstar) documentation for `ssstar` for more details and some examples.  You can also
 look at the `ssstar` CLI code [`ssstar-cli/main.rs`](`main.rs`) to see how we implemented our CLI in terms of the
 `ssstar` library crate.
-
-## :construction: Under Construction, Experimental
-
-`ssstar` is still under active development and should not yet be used in production.
-
-To install on your local system, use `cargo install`, ie:
-
-```shell
-cargo install --git https://github.com/elastio/ssstar.git --rev b9cf76ca3 --locked --force ssstar-cli
-```
-
-This uses the most recent commit that @anelson has designated as "stable"-ish.  You can drop the `--rev` argument and
-get the latest `master`, but this is more likely to be broken.
-
-After this command succeeds you will have `ssstar-cli` installed locally.  Normally on Linux systems this goes to
-`~/.cargo/bin`, so if this isn't in your `PATH` you must add it.
-
-Once you do so, run `ssstar create --help` to see how to perform the archive creation operation.
-
-Here's an example CLI that @anelson uses.  This won't work unless you have configured credentials into the
-`anelson-isolated` AWS account, but it's an example of the syntax:
-
-```shell
-ssstar create \
-  s3://elastio-vault-default-8ibrn2zg6/vault.json \
-  s3://elastio-vault-default-8ibrn2zg6/fixed:65536/metadata/chunks/db/ \
-  s3://elastio-vault-default-8ibrn2zg6/fixed:65536/metadata/extents/db/ \
-  s3://elastio-vault-anelson-test-a045e7928d \
-  "s3://elastio-account-level-stack-tfstate42168d51-qjatbtl9y9ve/**" \
-  --s3 s3://elastio-vault-default-8ibrn2zg6/test.tar
-```
-
-## Installation
-
-### Cargo
-
-* Install the rust toolchain in order to have cargo installed by following
-  [this](https://www.rust-lang.org/tools/install) guide.
-* run `cargo install ssstar-cli --locked`
 
 ## License
 
