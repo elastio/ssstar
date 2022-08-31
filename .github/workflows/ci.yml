@@ -177,7 +177,7 @@ jobs:
           target: x86_64-unknown-linux-musl
       - name: Install MUSL deps
         run: |
-          sudo apt-get install musl musl-dev
+          sudo apt-get install musl musl-dev musl-tools
       - uses: Swatinem/rust-cache@v1
       - name: Cargo build
         uses: actions-rs/cargo@v1
