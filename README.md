@@ -123,7 +123,7 @@ To use with Elastio, create archives with the `--stdout` option and pipe to `ela
 ```shell
 # Backup an entire S3 bucket `my-source-bucket` to the default Elastio vault:
 ssstar create s3://my-source-bucket/ --stdout \
-  | elastio stream backup --hostname-override my-source-bucket
+  | elastio stream backup --hostname-override my-source-bucket --stream-name my-backup
 ```
 
 ```shell
