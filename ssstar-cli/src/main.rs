@@ -6,18 +6,11 @@ use url::Url;
 
 mod progress;
 
+// NB: can't use git info here because when this crate is published to crates.io there is no
+// git metadata
 const VERSION_DETAILS: &str = concat!(
     env!("VERGEN_BUILD_SEMVER"),
     " (",
-    "branch ",
-    env!("VERGEN_GIT_BRANCH"),
-    ", ",
-    "commit ",
-    env!("VERGEN_GIT_SHA_SHORT"),
-    ", ",
-    "commit date ",
-    env!("VERGEN_GIT_COMMIT_DATE"),
-    ", ",
     "target ",
     env!("VERGEN_CARGO_TARGET_TRIPLE"),
     ")"
