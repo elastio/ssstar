@@ -32,12 +32,14 @@ jobs:
             architecture: x86_64
             binary-postfix: ".exe"
             use-cross: false
-          - os: ubuntu-latest
-            os-name: linux
-            target: aarch64-unknown-linux-musl
-            architecture: arm64
-            binary-postfix: ""
-            use-cross: true
+          # TODO: re-enable this but need to figure out how to cross-compile for ARM64 using MUSL
+          # Seems like the details are https://jensd.be/1126/linux/cross-compiling-for-arm-or-aarch64-on-debian-or-ubuntu
+          #- os: ubuntu-latest
+          #  os-name: linux
+          #  target: aarch64-unknown-linux-musl
+          #  architecture: arm64
+          #  binary-postfix: ""
+          #  use-cross: true
 
     steps:
       - name: Checkout repository
@@ -48,6 +50,10 @@ jobs:
           profile: minimal
           toolchain: ${{ matrix.job.target }}
       - uses: Swatinem/rust-cache@v1
+      - name: Install Ubuntu MUSL deps
+        run: |
+          sudo apt-get install musl musl-dev musl-tools
+        if: matrix.job.os-name == 'linux'
       - name: Cargo build
         uses: actions-rs/cargo@v1
         with:
@@ -96,3 +102,4 @@ jobs:
             target/${{ matrix.job.target }}/release/ssstar-*.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: startsWith(github.ref, 'refs/tags/v')
