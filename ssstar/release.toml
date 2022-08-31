@@ -3,7 +3,7 @@
 [[pre-release-replacements]]
 file = "../README.md"
 search = "ssstar = \"[\\d\\.]+\""
-replace = "ssstar = \"{{ version }}\""
+replace = "ssstar = \"{{version}}\""
 # Don't do this replacement when the version is a development version
 prerelease = false
 
