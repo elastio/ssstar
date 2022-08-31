@@ -9,4 +9,8 @@ consolidate-pushes = true
 
 # the suffix to append to the code in `master` after a release
 dev-version-ext = "dev"
+dev-version = true
 
+# Update versions of dependencies so they always have the same version
+# Seems like that should be the default but oh well
+dependent-version = "upgrade"
