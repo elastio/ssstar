@@ -188,8 +188,7 @@ jobs:
           RUSTFLAGS: '-C target-feature=+crt-static'
       - name: Test static binary
         run: |
-          find . -name ssstar
-          target/x86_64-unknown-linux-musl/ssstar --version
+          target/x86_64-unknown-linux-musl/release/ssstar --version
 
   docs:
     needs: clippy
