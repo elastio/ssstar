@@ -112,7 +112,6 @@ jobs:
 
 
   publish-docker:
-    needs: clippy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
