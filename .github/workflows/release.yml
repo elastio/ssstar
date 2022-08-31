@@ -1,4 +1,4 @@
-name: CD # Continuous Deployment
+name: Release
 
 on:
   push:
@@ -102,7 +102,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-cargo:
-    # Unfortunately `cargo-release` seems to not be smart enough to look at `dev-dependencies` when deciding 
+    # Unfortunately `cargo-release` seems to not be smart enough to look at `dev-dependencies` when deciding
     # in what order to publish crates, so we can't let it perform the actual publishing.  Need to do that manually.
     #
     # However the tag that this build runs on was produced by `cargo release`, so all of the versions are set correctly
@@ -117,15 +117,22 @@ jobs:
           profile: minimal
           override: true
       - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
+      - name: Publish ssstar-testing
+        uses: actions-rs/cargo@v1
         with:
           command: publish
           args: --token ${{ secrets.CARGO_API_KEY }} -p ssstar-testing
-      - uses: actions-rs/cargo@v1
+      - name: Sleep while crates.io processes ssstar-testing
+        run: sleep 60
+      - name: Publish ssstar
+        uses: actions-rs/cargo@v1
         with:
           command: publish
           args: --token ${{ secrets.CARGO_API_KEY }} -p ssstar
-      - uses: actions-rs/cargo@v1
+      - name: Sleep while crates.io processes ssstar
+        run: sleep 60
+      - name: Publish ssstar-cli
+        uses: actions-rs/cargo@v1
         with:
           command: publish
           args: --token ${{ secrets.CARGO_API_KEY }} -p ssstar-cli
