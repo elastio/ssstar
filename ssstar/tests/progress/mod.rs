@@ -3,6 +3,7 @@
 use more_asserts::*;
 use ssstar::{CreateProgressCallback, ExtractProgressCallback};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Clone, Debug, strum::EnumDiscriminants)]
 #[allow(dead_code)] // Not all of these are used in tests but we want to capture all fields for all events
@@ -539,7 +540,7 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         });
     }
 
-    fn input_objects_download_completed(&self, total_bytes: u64) {
+    fn input_objects_download_completed(&self, total_bytes: u64, _duration: Duration) {
         self.report_event(CreateProgressEvent::InputObjectsDownloadCompleted { total_bytes });
     }
 
@@ -602,7 +603,7 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         self.report_event(CreateProgressEvent::TarArchiveBytesUploaded { bytes_uploaded });
     }
 
-    fn tar_archive_upload_completed(&self, size: u64) {
+    fn tar_archive_upload_completed(&self, size: u64, _duration: Duration) {
         self.report_event(CreateProgressEvent::TarArchiveUploadCompleted { size });
     }
 }
@@ -1043,6 +1044,7 @@ impl ExtractProgressCallback for TestExtractProgressCallback {
         skipped_objects: usize,
         skipped_object_bytes: u64,
         total_bytes: u64,
+        _duration: Duration,
     ) {
         self.report_event(ExtractProgressEvent::ExtractFinished {
             extracted_objects,
@@ -1074,7 +1076,7 @@ impl ExtractProgressCallback for TestExtractProgressCallback {
         });
     }
 
-    fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64) {
+    fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64, _duration: Duration) {
         self.report_event(ExtractProgressEvent::ObjectsUploaded {
             total_objects,
             total_object_bytes,

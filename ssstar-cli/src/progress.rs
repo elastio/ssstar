@@ -109,7 +109,7 @@ struct CreateProgressReport {
 impl CreateProgressReport {
     fn new(hide_progress: bool, job: &ssstar::CreateArchiveJob) -> Self {
         fn standard_style() -> indicatif::ProgressStyle {
-            indicatif::ProgressStyle::with_template("{spinner:.green} {prefix}: {msg:<45!} [{bar:20.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
+            indicatif::ProgressStyle::with_template("{spinner:.green} {prefix}: {msg:<55!} [{bar:20.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})")
         .unwrap()
         .progress_chars("#>-")
         }
@@ -234,13 +234,21 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
         // Progress bars report part-by-part so there's no need to update a progress bar here
     }
 
-    fn input_objects_download_completed(&self, total_bytes: u64) {
+    fn input_objects_download_completed(&self, total_bytes: u64, duration: Duration) {
         // If everything is working right, the progress bars for download are already exactly at
         // 100% done from prior updates but let's mark them as officially "done" now.
+        let bytes_per_second = (total_bytes as f64 / duration.as_secs_f64()) as u64;
+        let bytes_per_second = indicatif::BinaryBytes(bytes_per_second);
+        let total_bytes = indicatif::BinaryBytes(total_bytes);
+        let duration = indicatif::HumanDuration(duration);
+        let message =
+            format!("Download completed ({total_bytes} in {duration}, {bytes_per_second}/s)");
+
+        self.multi.println(&message).unwrap();
         self.raw_bytes_downloaded
-            .finish_with_message("Download completed");
+            .finish_with_message(format!("Done ({total_bytes}, {bytes_per_second})"));
         self.ordered_bytes_downloaded
-            .finish_with_message("Download completed");
+            .finish_with_message(format!("Done ({total_bytes}, {bytes_per_second})"));
     }
 
     fn tar_archive_initialized(
@@ -303,7 +311,13 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
             .set_message("Upload in progress");
     }
 
-    fn tar_archive_upload_completed(&self, size: u64) {
+    fn tar_archive_upload_completed(&self, size: u64, duration: Duration) {
+        let bytes_per_second = (size as f64 / duration.as_secs_f64()) as u64;
+        let bytes_per_second = indicatif::BinaryBytes(bytes_per_second);
+        let duration = indicatif::HumanDuration(duration);
+        let message = format!("Archive upload completed ({duration}, {bytes_per_second}/s)");
+
+        self.multi.println(&message).unwrap();
         self.archive_bytes_uploaded
             .finish_with_message("Archive upload completed");
     }
@@ -335,7 +349,7 @@ struct ExtractProgressReport {
 impl ExtractProgressReport {
     fn new(hide_progress: bool, job: &ssstar::ExtractArchiveJob) -> Self {
         fn standard_style() -> indicatif::ProgressStyle {
-            indicatif::ProgressStyle::with_template("{spinner:.green} {prefix}: {msg:<45!} [{bar:20.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
+            indicatif::ProgressStyle::with_template("{spinner:.green} {prefix}: {msg:<55!} [{bar:20.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})")
         .unwrap()
         .progress_chars("#>-")
         }
@@ -424,38 +438,39 @@ impl ssstar::ExtractProgressCallback for ExtractProgressReport {
         skipped_objects: usize,
         skipped_object_bytes: u64,
         total_bytes: u64,
+        duration: Duration,
     ) {
+        let bytes_per_second = (total_bytes as f64 / duration.as_secs_f64()) as u64;
+        let bytes_per_second = indicatif::BinaryBytes(bytes_per_second);
+        let total_objects = indicatif::HumanCount((extracted_objects + skipped_objects) as u64);
         let extracted_objects = indicatif::HumanCount(extracted_objects as u64);
         let extracted_object_bytes = indicatif::BinaryBytes(extracted_object_bytes);
         let skipped_objects = indicatif::HumanCount(skipped_objects as u64);
         let skipped_object_bytes = indicatif::BinaryBytes(skipped_object_bytes);
         let total_bytes = indicatif::BinaryBytes(total_bytes);
+        let duration = indicatif::HumanDuration(duration);
 
         self.multi.println(
-            format!("Extraction complete!  Read {total_bytes} from archive, extracted {extracted_objects} objects ({extracted_object_bytes})")).unwrap();
-        if skipped_objects.0 > 0 {
-            self.multi
-                .println(format!(
-                    "Skipped {skipped_objects} objects ({skipped_object_bytes})"
-                ))
-                .unwrap();
-        }
+            format!("Extraction complete!  Read {total_objects} objects ({total_bytes}) from archive in {duration} ({bytes_per_second}/s)")).unwrap();
+        self.multi
+            .println(format!(
+                "Extracted {extracted_objects} objects ({extracted_object_bytes})"
+            ))
+            .unwrap();
+        self.multi
+            .println(format!(
+                "Skipped {skipped_objects} objects ({skipped_object_bytes})"
+            ))
+            .unwrap();
 
-        self.raw_bytes_read.set_length(total_bytes.0);
-        self.raw_bytes_read.set_position(total_bytes.0);
-        self.raw_bytes_read
-            .finish_with_message(format!("Extraction complete ({total_bytes} read)"));
-
-        self.extract_object.set_length(extracted_object_bytes.0);
-        self.extract_object.set_position(extracted_object_bytes.0);
-        self.extract_object
-            .finish_with_message("Extraction complete ({extracted_objects} extracted)");
+        self.raw_bytes_read.finish_and_clear();
+        self.extract_object.finish_and_clear();
     }
 
     fn object_upload_starting(&self, key: &str, size: u64) {
         self.upload_object.set_position(0);
         self.upload_object.set_length(size);
-        self.extract_object.set_message(key.to_string());
+        self.upload_object.set_message(key.to_string());
     }
 
     fn object_part_uploaded(&self, key: &str, bytes: usize) {
@@ -466,17 +481,18 @@ impl ssstar::ExtractProgressCallback for ExtractProgressReport {
         self.upload_object.set_position(size);
     }
 
-    fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64) {
+    fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64, duration: Duration) {
+        let bytes_per_second = (total_object_bytes as f64 / duration.as_secs_f64()) as u64;
+        let bytes_per_second = indicatif::BinaryBytes(bytes_per_second);
         let total_objects = indicatif::HumanCount(total_objects as u64);
         let total_object_bytes = indicatif::BinaryBytes(total_object_bytes);
-        self.upload_object.set_length(total_object_bytes.0);
-        self.upload_object.set_position(total_object_bytes.0);
+        let duration = indicatif::HumanDuration(duration);
+
         self.multi
             .println(format!(
-                "Upload complete!  Uploaded {total_objects} objects ({total_object_bytes})"
+                "Upload complete!  Uploaded {total_objects} objects ({total_object_bytes}) in {duration} ({bytes_per_second}/s)"
             ))
             .unwrap();
-        self.upload_object
-            .finish_with_message(format!("Upload complete ({total_object_bytes})"))
+        self.upload_object.finish_and_clear();
     }
 }

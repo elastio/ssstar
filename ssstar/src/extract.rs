@@ -44,6 +44,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 use tracing::{debug, debug_span, error, info, info_span, instrument, trace, Instrument};
 use url::Url;
@@ -392,6 +393,7 @@ pub trait ExtractProgressCallback: Sync + Send {
         skipped_objects: usize,
         skipped_object_bytes: u64,
         total_bytes: u64,
+        duration: Duration,
     ) {
     }
 
@@ -406,7 +408,7 @@ pub trait ExtractProgressCallback: Sync + Send {
 
     /// All objects that matched the filter criteria have been uploaded and the job is now ready to
     /// complete
-    fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64) {}
+    fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64, duration: Duration) {}
 }
 
 #[derive(Debug)]
@@ -539,7 +541,7 @@ impl ExtractArchiveJob {
             //
             // If the error indicates the sender mpsc was dropped, that's the queue to check the
             // processor task's result instead
-            let (total_objects, total_object_bytes) = match reader_result {
+            let (total_objects, total_object_bytes, elapsed) = match reader_result {
                 Ok(_) => {
                     // Good sign.  Only the processor can fail
                     processor_result?
@@ -559,7 +561,7 @@ impl ExtractArchiveJob {
                 }
             };
 
-            progress.objects_uploaded(total_objects, total_object_bytes);
+            progress.objects_uploaded(total_objects, total_object_bytes, elapsed);
 
             info!("Finished extract job");
 
@@ -585,6 +587,7 @@ impl ExtractArchiveJob {
         let mut extracted_object_bytes = 0u64;
         let mut skipped_objects = 0usize;
         let mut skipped_object_bytes = 0u64;
+        let started = Instant::now();
 
         for result in archive
             .entries()
@@ -696,6 +699,7 @@ impl ExtractArchiveJob {
             skipped_objects,
             skipped_object_bytes,
             reader.total_bytes_read(),
+            started.elapsed(),
         );
 
         Ok(())
@@ -739,12 +743,18 @@ impl ExtractArchiveJob {
         target_prefix: String,
         progress: Arc<dyn ExtractProgressCallback>,
         mut entry_receiver: mpsc::Receiver<TarEntryComponent>,
-    ) -> Result<(usize, u64)> {
+    ) -> Result<(usize, u64, Duration)> {
         // Keep processing entries until the sender is dropped
         let mut total_objects = 0usize;
         let mut total_object_bytes = 0u64;
+        let mut started: Option<Instant> = None;
 
         while let Some(tar_entry_component) = entry_receiver.recv().await {
+            // Don't start counting time elapsed for upload until the first entry is received
+            if started.is_none() {
+                started = Some(Instant::now());
+            }
+
             match tar_entry_component {
                 TarEntryComponent::SmallFile { path, data } => {
                     let key = format!("{}{}", target_prefix, path.display());
@@ -875,7 +885,11 @@ impl ExtractArchiveJob {
 
         debug!("Entry sender dropped; no more tar entries to process");
 
-        Ok((total_objects, total_object_bytes))
+        Ok((
+            total_objects,
+            total_object_bytes,
+            started.expect("BUG: unconditionally set in loop").elapsed(),
+        ))
     }
 }
 

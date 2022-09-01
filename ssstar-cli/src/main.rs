@@ -1,3 +1,5 @@
+#![doc = include_str!("../../README.md")]
+
 use clap::{ArgGroup, Parser, Subcommand};
 use ssstar::{CreateArchiveJobBuilder, ExtractArchiveJobBuilder, SourceArchive, TargetArchive};
 use std::path::PathBuf;

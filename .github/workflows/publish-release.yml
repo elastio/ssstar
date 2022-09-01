@@ -116,7 +116,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      - name: Get ssstar version
+      - name: Build docker image
         shell: bash
         run: |
           # Tag the docker image with the full semver, major.minor, and major
