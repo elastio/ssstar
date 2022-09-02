@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.2.0 - 2-Sept-2022
+
 ### Breaking Changes
 
 * Report average bytes per second rates at the end of each stage of operation.  This modifies the signature of the
