@@ -1,0 +1,79 @@
+#cloud-config
+#
+# Bootstrap a `s0` server on Amazon Linux 2.
+#
+# This script is intended to run as part of the cloud init
+
+# Very early in the boot process, enable the EPEL repo
+bootcmd:
+  - [ "cloud-init-per", "once", "amazon-linux-extras-epel", "amazon-linux-extras", "install", "epel" ]
+
+# Always pull in the latest updates
+repo_update: true
+repo_upgrade: all
+
+packages:
+  - python3-pip
+  - clang
+  - llvm-devel
+  - libudev-devel
+  - openssl-devel
+  - jq
+  - daemonize
+  - libblkid-devel
+  - parted-devel
+
+write_files:
+  # Add environment vars to enable metrics push by default
+  # Configure the AWS region appropriately
+  - path: /etc/profile
+    append: true
+    content: |
+      # These entries appended by the cloudinit script in s0-bootstrap.yml
+
+      if command -v jq > /dev/null; then
+        # The default region should be the region this instance runs in (duh!)
+        export AWS_DEFAULT_REGION=$(curl --silent http://169.254.169.254/latest/dynamic/instance-identity/document | jq ".region" -r)
+      else
+        echo "WARNING: jq isn't installed yet.  You probably shelled in too early.  Give the instance a few more seconds and log in again"
+      fi
+
+      # Can't always rely on the .cargo/config populated below to force native builds.
+      export RUSTFLAGS=-Ctarget-cpu=native
+
+      source ~/.cargo/env
+
+  # Tell cargo to always use all of the native CPU features
+  # Since we don't use these instances to build dist binaries, we don't care about making binaries that are compatible with all CPUs
+  - path: /.cargo/config
+    content: |
+      [target.'cfg(any(windows, unix))']
+      rustflags = ["-Ctarget-cpu=native"]
+
+  - path: /etc/security/limits.d/99-elastio.conf
+    content: |
+      ec2-user   soft   nofile    20000
+      ec2-user   hard   nofile    100000
+      root   soft   nofile    20000
+      root   hard   nofile    100000
+
+runcmd:
+  # Need development tools to support Rust
+  - yum groupinstall -y "Development Tools"
+
+    # The EPEL repo has some additional packages we need
+  - yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+
+  # viy depends on some libraries for file systems
+  - yum install -y e2fsprogs-devel xfsprogs-devel
+
+  # until https://github.com/elastio/elastio-snap/issues/55 is fixed, need the kernel headers
+  - yum install -y kernel-devel
+
+  # Need the AWS CLI and ansible
+  - pip3 install awscli ansible boto3
+
+  # Install rust for the ec2-user
+  - su ec2-user --session-command "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
+
+

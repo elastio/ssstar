@@ -47,6 +47,7 @@ use std::future::Future;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWrite;
 use tokio::sync::oneshot;
 use tracing::{debug, error, instrument};
@@ -475,7 +476,7 @@ pub trait CreateProgressCallback: Sync + Send {
     /// That doesn't mean the work is done; there can still be ongoing tasks either writing some of
     /// that downloaded data to the tar builder, or uploading writes to the tar archive to object
     /// storage.
-    fn input_objects_download_completed(&self, total_bytes: u64) {}
+    fn input_objects_download_completed(&self, total_bytes: u64, duration: Duration) {}
 
     /// The tar archive has been initialized but not yet written to.
     ///
@@ -551,7 +552,7 @@ pub trait CreateProgressCallback: Sync + Send {
     /// This is the final event that can happen.  Once this event fires, the job is done.
     ///
     /// If the tar archive is not being directed to object storage, then this event will never fire
-    fn tar_archive_upload_completed(&self, size: u64) {}
+    fn tar_archive_upload_completed(&self, size: u64, duration: Duration) {}
 }
 
 /// A job which will create a new tar archive from object store inputs.
@@ -728,6 +729,7 @@ impl CreateArchiveJob {
 
             tokio::spawn(async move {
                 let mut total_bytes_downloaded = 0u64;
+                let input_objects_download_started = Instant::now();
 
                 while let Some(result) = parts_stream.next().await {
                     // Part downloads are yield from the stream in the order in which they appeared,
@@ -774,7 +776,10 @@ impl CreateArchiveJob {
                 }
 
                 if !parts_sender.is_closed() {
-                    progress.input_objects_download_completed(total_bytes_downloaded)
+                    progress.input_objects_download_completed(
+                        total_bytes_downloaded,
+                        input_objects_download_started.elapsed(),
+                    );
                 }
             });
         }
@@ -783,6 +788,13 @@ impl CreateArchiveJob {
         // For what should be obvious reasons, the writing of data to the tar archive must be done
         // serially, even though we downloaded the data in parallel, and the stream that the tar
         // Builder writes to will upload the written data in paralell also.
+
+        // To keep track of when the writes to the tar archive started.  Technically what we
+        // actually want to know is when the *upload* to S3 starts, which can be a bit after the
+        // writes start since the write buffer needs to fill up first.  However this is close
+        // enough.
+        let mut tar_archive_writes_started: Option<Instant> = None;
+
         loop {
             // The next part must be part 0 of a new object
             match parts_receiver.recv().await {
@@ -842,6 +854,11 @@ impl CreateArchiveJob {
                     // and wait for the appender to stop
                     let mut appender_aborted = false;
                     if (sender.send(Ok(data)).await).is_ok() {
+                        if tar_archive_writes_started.is_none() {
+                            // Record this instant when writes first started
+                            tar_archive_writes_started = Some(Instant::now());
+                        }
+
                         progress.tar_archive_part_written(
                             part.input_object.bucket.name(),
                             &part.input_object.key,
@@ -927,7 +944,10 @@ impl CreateArchiveJob {
                         bytes_written,
                         "Upload of tar archive to object storage completed"
                     );
-                    progress.tar_archive_upload_completed(bytes_written);
+                    let elapsed = tar_archive_writes_started
+                        .expect("BUG: is set unconditionally during tar writes")
+                        .elapsed();
+                    progress.tar_archive_upload_completed(bytes_written, elapsed);
 
                     Ok(())
                 }

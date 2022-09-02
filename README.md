@@ -143,7 +143,7 @@ and extraction, respectively.  There are a few command line options that are par
 
 `ssstar` is developed and tested against AWS S3, however it should work with any object storage system that provides an
 S3-compatible API.  In particular, most of the automated tests our CI system runs actually use [Minio](https://min.io)
-and not the real S3 API.  To use `ssstar` with an S3-compatible API, use the `--s3_endpoint` option.  For example, if
+and not the real S3 API.  To use `ssstar` with an S3-compatible API, use the `--s3-endpoint` option.  For example, if
 you have a Minio server running at `127.0.7.1:30000`, using default `minioadmin` credentials, you can use it with
 `ssstar` like this:
 
