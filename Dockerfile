@@ -32,6 +32,8 @@ RUN cargo build --release -p ssstar-cli
 ####################################################################################################
 FROM debian:bullseye-slim
 
+LABEL "org.opencontainers.image.source"="https://github.com/elastio/ssstar"
+
 # Import from builder.
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
