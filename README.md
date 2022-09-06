@@ -32,7 +32,7 @@ compiler installed you can use `cargo install` to get the ssstar CLI:
 
 ### Precompiled binaries
 
-See the [GitHub Releases](releases) for pre-compiled binaries for Windows, mac, and Linux.
+See the [GitHub Releases](/elastio/ssstar/releases) for pre-compiled binaries for Windows, mac, and Linux.
 
 ## Usage (without Elastio)
 
