@@ -51,7 +51,7 @@ snafu = { version = "0.7.1", features = ["futures"] }
 tar = "0.4.38"
 tokio = { version = "1.21.2", features = ["full"] }
 tokio-stream = "0.1.10"
-tokio-util = { version = "0.7.3", features = ["io", "io-util"] }
+tokio-util = { version = "0.7.4", features = ["io", "io-util"] }
 tracing = "0.1.36"
 url = "2.2.2"
 
