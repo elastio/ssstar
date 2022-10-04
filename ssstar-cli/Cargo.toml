@@ -28,7 +28,7 @@ name = "ssstar"
 
 [dependencies]
 ssstar = {version = "0.2.1-dev", path = "../ssstar", features = ["clap"] }
-clap = {version = "3.2.19", features = ["derive"]}
+clap = {version = "4.0.9", features = ["derive"]}
 url = "2.3.0"
 byte-unit = "4.0.14"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter", "fmt", "local-time"] }
