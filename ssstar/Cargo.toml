@@ -61,7 +61,7 @@ color-eyre = "0.6.2"
 rand = "0.8.5"
 strum = { version = "0.24.1", features = ["derive"] }
 assert_matches = "1.5.0"
-more-asserts = "0.3.0"
+more-asserts = "0.3.1"
 tempdir = "0.3.7"
 dotenv = "0.15.0"
 dotenv_codegen = "0.15.0"
