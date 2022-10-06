@@ -34,19 +34,22 @@
 //! Perhaps a future enhancement will enhance this so that even in the case of many small objects
 //! the extract process can benefit from parallelism, but this is much more challenging than in the
 //! archive creation implementation.
-use crate::objstore::{Bucket, ObjectStorageFactory};
+use crate::objstore::{Bucket, MultipartUploader, ObjectStorageFactory};
 use crate::tar::CountingReader;
 use crate::{Config, Result};
 use bytes::{Bytes, BytesMut};
-use snafu::prelude::*;
+use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use snafu::{prelude::*, IntoError};
 use std::future::Future;
 use std::io::Read;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::{io::AsyncWriteExt, sync::mpsc};
-use tracing::{debug, debug_span, error, info, info_span, instrument, trace, Instrument};
+use tokio::sync::mpsc;
+use tracing::{debug, debug_span, error, info, info_span, instrument, Instrument};
 use url::Url;
 
 /// Represents from where the archive will be read
@@ -470,18 +473,19 @@ impl ExtractArchiveJob {
             let reader = self.source_archive.into_reader(progress.clone()).await?;
             let reader_fut = {
                 let progress = progress.clone();
+                let target_bucket = self.target_bucket.clone();
+
                 tokio::task::spawn_blocking(move || {
                     let _guard = reader_span.enter();
 
                     debug!("Starting blocking tar read task");
 
                     match Self::read_tar_entries_blocking(
+                        target_bucket,
                         self.filters,
                         reader,
                         progress,
                         entry_sender,
-                        self.config.multipart_threshold.get_bytes() as usize,
-                        self.config.multipart_chunk_size.get_bytes() as usize,
                     ) {
                         Ok(()) => {
                             debug!("Blocking tar read task completing successfully");
@@ -507,6 +511,7 @@ impl ExtractArchiveJob {
                     debug!("Starting tar entry processor task");
 
                     match Self::process_tar_entries(
+                        self.config.max_concurrent_requests,
                         self.target_bucket,
                         self.target_prefix,
                         progress,
@@ -574,12 +579,11 @@ impl ExtractArchiveJob {
     /// Blocking worker task that iterates over the entries in the `tar` archive, and pushes them
     /// onto the MPSC queue where they will be processed by async code doing the extraction
     fn read_tar_entries_blocking(
+        target_bucket: Box<dyn Bucket>,
         filters: Vec<ExtractFilter>,
         reader: CountingReader<Box<dyn Read + Send>>,
         progress: Arc<dyn ExtractProgressCallback>,
         entry_sender: mpsc::Sender<TarEntryComponent>,
-        multipart_threshold: usize,
-        multipart_chunk_size: usize,
     ) -> Result<()> {
         let mut archive = tar::Archive::new(reader);
 
@@ -637,54 +641,55 @@ impl ExtractArchiveJob {
             // the `tar::Entry` type itself implements `Read` which will read the data for the
             // entry.
             // we exploit that here.
-            if len < multipart_threshold as u64 {
-                // This file is small enough there's no value in processing it as multiple parts
-                debug!("Processing entry as a small file");
-                let data = Self::read_data(&mut entry, len as usize)?;
+            match target_bucket.partition_for_multipart_upload(&key, len)? {
+                None => {
+                    // This object is too small to bother with multi-part uploads so read the whole
+                    // thing and send it to the processing task
+                    // This file is small enough there's no value in processing it as multiple parts
+                    debug!("Processing entry as a small file");
+                    let data = Self::read_data(&mut entry, len as usize)?;
 
-                progress.extract_object_part_read(&key, len as usize);
-                progress.extract_object_finished(&key, len);
-                extracted_objects += 1;
-                extracted_object_bytes += len;
+                    progress.extract_object_part_read(&key, len as usize);
+                    progress.extract_object_finished(&key, len);
+                    extracted_objects += 1;
+                    extracted_object_bytes += len;
 
-                Self::send_component(TarEntryComponent::SmallFile { path, data }, &entry_sender)?;
-            } else {
-                // This file is big enough that it's worth breaking up into multipart chunks
-                debug!("Processing entry as multi-part");
-                Self::send_component(
-                    TarEntryComponent::StartMultipartFile { path, len },
-                    &entry_sender,
-                )?;
-
-                // NOTE: don't confuse the concept of multipart in this module with the object
-                // store-specific multi-part upload APIs.  Each `Bucket` impl is responsible for
-                // ensuring that multi-part chunking is applied correctly for that particular
-                // implementation.  Meaning these chunk boundaries aren't necessarily the exact
-                // chunk boundaries that will be used when uploading to object storage.  The
-                // purpose of multi-part here is to start sending data from the blocking tar reader
-                // to the async processor task quickly, so it can start uploading without waiting
-                // for the entire download and extract to finish.
-                let mut bytes_remaining = len;
-                while bytes_remaining > 0 {
-                    let data = Self::read_data(
-                        &mut entry,
-                        bytes_remaining.min(multipart_chunk_size as u64) as usize,
+                    Self::send_component(
+                        TarEntryComponent::SmallFile { path, data },
+                        &entry_sender,
                     )?;
-                    bytes_remaining -= data.len() as u64;
-                    progress.extract_object_part_read(&key, data.len());
-
-                    let component = if bytes_remaining > 0 {
-                        TarEntryComponent::FilePart { data }
-                    } else {
-                        TarEntryComponent::EndMultipartFile { data }
-                    };
-
-                    Self::send_component(component, &entry_sender)?;
                 }
+                Some(parts) => {
+                    // Object is large enough it should be uploaded via multi-part.  Read the
+                    // object in multiple parts corresponding the the provided ranges and send them
+                    // to processing one at a time.
+                    debug!(num_parts = parts.len(), "Processing entry as multi-part");
+                    Self::send_component(
+                        TarEntryComponent::StartMultipartFile {
+                            path,
+                            len,
+                            parts: parts.clone(),
+                        },
+                        &entry_sender,
+                    )?;
 
-                progress.extract_object_finished(&key, len);
-                extracted_objects += 1;
-                extracted_object_bytes += len;
+                    for part in parts {
+                        let len = part.end - part.start;
+
+                        let data = Self::read_data(&mut entry, len as usize)?;
+                        progress.extract_object_part_read(&key, data.len());
+
+                        let component = TarEntryComponent::FilePart { part, data };
+
+                        Self::send_component(component, &entry_sender)?;
+                    }
+
+                    Self::send_component(TarEntryComponent::EndMultipartFile, &entry_sender)?;
+
+                    progress.extract_object_finished(&key, len);
+                    extracted_objects += 1;
+                    extracted_object_bytes += len;
+                }
             }
         }
 
@@ -739,156 +744,277 @@ impl ExtractArchiveJob {
     /// reader.
     #[instrument(skip(target_bucket, progress, entry_receiver), fields(target_bucket = target_bucket.name()))]
     async fn process_tar_entries(
+        max_concurrent_requests: usize,
         target_bucket: Box<dyn Bucket>,
         target_prefix: String,
         progress: Arc<dyn ExtractProgressCallback>,
-        mut entry_receiver: mpsc::Receiver<TarEntryComponent>,
+        entry_receiver: mpsc::Receiver<TarEntryComponent>,
     ) -> Result<(usize, u64, Duration)> {
         // Keep processing entries until the sender is dropped
-        let mut total_objects = 0usize;
-        let mut total_object_bytes = 0u64;
-        let mut started: Option<Instant> = None;
 
-        while let Some(tar_entry_component) = entry_receiver.recv().await {
-            // Don't start counting time elapsed for upload until the first entry is received
-            if started.is_none() {
-                started = Some(Instant::now());
-            }
+        // For each entry sent from the tar reader thread, create a future that processes that
+        // entry (meaning uploads it, either single-part or multi-part).  The result will be a
+        // `Stream<impl Future>`, which we can then call `buffered` on to ensure no more than the
+        // max concurrent operations are running at a time.
+        //
+        // This perhaps awkward-seeming construction is important for performance.  If there are
+        // many small files, we want to upload them in parallel.  If there are fewer, large files
+        // that are elligible for multipart upload, we want to upload those parts in parallel.  If
+        // there's a mix of both, we want to nonetheless ensure there are many parallel upload
+        // operations running for maximum extract performance.
+        let entry_receiver = tokio_stream::wrappers::ReceiverStream::new(entry_receiver);
 
-            match tar_entry_component {
-                TarEntryComponent::SmallFile { path, data } => {
-                    let key = format!("{}{}", target_prefix, path.display());
-                    let len = data.len();
-                    debug!(path= %path.display(),len, %key, "Uploading small file");
+        // State that needs to be kept as we process tar entry components
+        struct State<InitFut, PartUploadFut> {
+            current_uploader: Option<Box<dyn MultipartUploader>>,
+            current_key: Option<String>,
+            init_fut: Option<InitFut>,
+            part_upload_futs: Vec<PartUploadFut>,
+            last_multipart_uploaded: Option<Range<u64>>,
+            total_objects: Arc<AtomicUsize>,
+            total_object_bytes: Arc<AtomicU64>,
+        }
 
-                    progress.object_upload_starting(&key, len as u64);
+        let total_objects = Arc::new(AtomicUsize::new(0));
+        let total_object_bytes = Arc::new(AtomicU64::new(0));
+        let started = Instant::now();
 
-                    target_bucket.put_small_object(key.clone(), data).await?;
+        let futs = entry_receiver.scan(
+            State {
+                current_uploader: None,
+                current_key: None,
+                init_fut: None,
+                part_upload_futs: Vec::new(),
+                last_multipart_uploaded: None,
+                total_objects: total_objects.clone(),
+                total_object_bytes: total_object_bytes.clone(),
+            },
+            move |state, tar_entry_component| {
+                let progress = progress.clone();
 
-                    progress.object_part_uploaded(&key, len);
-                    progress.object_uploaded(&key, len as u64);
-                    total_objects += 1;
-                    total_object_bytes += len as u64;
-                }
-                TarEntryComponent::StartMultipartFile { path, len } => {
-                    let key = format!("{}{}", target_prefix, path.display());
-                    debug!(path = %path.display(), len, %key, "Starting multipart file upload");
+                let fut = match tar_entry_component {
+                    // A "small" file was read from tar, too small for multipart uploading.  So
+                    // just upload it directly to S3.
+                    TarEntryComponent::SmallFile { path, data } => {
+                        let key = format!("{}{}", target_prefix, path.display());
+                        let len = data.len();
 
-                    progress.object_upload_starting(&key, len);
+                        let target_bucket = target_bucket.clone();
+                        let total_objects = state.total_objects.clone();
+                        let total_object_bytes = state.total_object_bytes.clone();
 
-                    let (mut bytes_writer, mut progress_receiver, result_receiver) = target_bucket
-                        .create_object_writer(key.clone(), Some(len))
-                        .await?;
+                        async move {
+                            debug!(path= %path.display(),len, %key, "Uploading small file");
 
-                    // Keep reading the entry receiver to get all of the parts of this file
-                    let mut total_bytes_read = 0u64;
+                            progress.object_upload_starting(&key, len as u64);
 
-                    let loop_result = loop {
-                        tokio::select! {
-                            result = entry_receiver.recv() => {
-                                let tar_entry_component = match result {
-                                    None => {
-                                        // This means there was an error reading from the tar
-                                        // archive and the tar reader task exited prematurely,
-                                        // dropping the sender.
-                                        error!("Tar entry sender dropped prematurely; aborting processing loop");
-                                        break crate::error::TarExtractAbortedSnafu{}.fail();
-                                    },
-                                    Some(tar_entry_component) => tar_entry_component
-                                };
+                            target_bucket.put_small_object(key.clone(), data).await?;
 
-                                match tar_entry_component {
-                                    TarEntryComponent::FilePart { data } => {
-                                        debug!(path = %path.display(),len = data.len(), "Uploading file part");
-                                        total_bytes_read += data.len() as u64;
-                                        bytes_writer.write_all(&data).await.with_context(|_| crate::error::UploadWriterSnafu {})?;
-                                    },
-                                    TarEntryComponent::EndMultipartFile { data } => {
-                                        debug!(path = %path.display(),len = data.len(), "Uploading final file part");
-                                        total_bytes_read += data.len() as u64;
-                                        assert_eq!(len, total_bytes_read,
-                                            "BUG: File {} has size {} bytes but the tar reader sent only {} bytes",
-                                                path.display(),
-                                                len,
-                                                total_bytes_read);
+                            progress.object_part_uploaded(&key, len);
+                            progress.object_uploaded(&key, len as u64);
 
-                                        bytes_writer.write_all(&data).await.with_context(|_| crate::error::UploadWriterSnafu {})?;
+                            total_objects.fetch_add(1, Ordering::SeqCst);
+                            total_object_bytes.fetch_add(len as u64, Ordering::SeqCst);
 
-                                        break Ok(());
-                                    },
-                                    TarEntryComponent::SmallFile {..} | TarEntryComponent::StartMultipartFile { .. } =>  {
-                                        // Neither of these should be sent while a multi-part
-                                        // upload is still in process
-                                        unreachable!();
-                                    }
-                                }
-                            },
-                            result = progress_receiver.recv() => {
-                                if let Some(bytes_uploaded) = result {
-                                    progress.object_part_uploaded(&key, bytes_uploaded);
-                                }
-                            },
+                            Ok(())
                         }
-                    };
-
-                    // Signal to the upload task that no more data will be forthcoming
-                    drop(bytes_writer);
-
-                    // The upload task typically will keep running for at least a few hundred ms
-                    // longer, and maybe several seconds.  Keep up with progress updates during
-                    // that types.
-                    while let Some(bytes_uploaded) = progress_receiver.recv().await {
-                        progress.object_part_uploaded(&key, bytes_uploaded);
+                        .boxed()
                     }
 
-                    // Whether the loop exited with a success or error result, if there's an error
-                    // result from the async worker that's doing upload, fail with that since it's
-                    // likely a more meaningful explanation of what went wrong
-                    match result_receiver.await {
-                        Ok(Ok(total_bytes_uploaded)) => {
-                            // Everything is good on the uploader side
-                            assert_eq!(len, total_bytes_uploaded);
-                            trace!(path = %path.display(), len, %key, "Async upload task succeeded");
+                    TarEntryComponent::StartMultipartFile {
+                        path,
+                        len,
+                        parts
+                    } => {
+                        // A file large enough that it should be a multi-part upload is being read.
+                        let key = format!("{}{}", target_prefix, path.display());
+
+                        let uploader = target_bucket.start_multipart_upload(key.clone(),
+                            parts);
+
+                        state.current_key = Some(key.clone());
+                        state.current_uploader = Some(uploader.clone());
+                        state.part_upload_futs = Vec::new();
+                        state.last_multipart_uploaded = None;
+
+                        // The future that starts the multi-part upload also needs to be clonable,
+                        // because every single file part upload future needs to wait until this
+                        // future is done so it can be sure it's safe to start uploading.
+                        // The hack with `Arc::new` on error is there for the same reason as
+                        // `FilePart`
+                        let init_fut = async move {
+                            debug!(path = %path.display(), len, %key, "Starting multipart file upload");
+
+                            uploader.init().await?;
+
+                            progress.object_upload_starting(&key, len);
+
+                            Ok(())
+                        }.map_err(|e| {
+                            // We can't use the `shared` combinator unless the Ok and Err types are
+                            // both clonable.
+                            Arc::new(e)
+                        }).shared();
+
+                        state.init_fut = Some(init_fut.clone());
+
+                        init_fut
+                            .map_err(|e| {
+                                crate::error::TarFileStartMultipartFileSnafu { }.into_error(e)
+                            })
+                            .boxed()
+                    }
+
+                    TarEntryComponent::FilePart { data, part } => {
+                        // A part of the multipart file was read and should be sent to S3
+                        let uploader = state
+                            .current_uploader
+                            .clone()
+                            .expect("BUG: Got FilePart without StartMultipartFile");
+                        let total_object_bytes = state.total_object_bytes.clone();
+                        let key = state.current_key.clone().expect("BUG: Missing current_key");
+                        let init_fut = state.init_fut.clone().expect("BUG: Missing init_fut");
+
+                        // To ensure data integrity, ensure this is contiguous and non-overlapping with
+                        // the last part, if any
+                        match &state.last_multipart_uploaded {
+                            Some(last_part) => {
+                                assert_eq!(last_part.end, part.start);
+                            }
+                            None => {
+                                assert_eq!(0, part.start);
+                            }
+                        }
+
+                        assert_eq!(part.end - part.start, data.len() as u64);
+
+                        state.last_multipart_uploaded = Some(part.clone());
+
+                        // The futures that actually upload parts need to be cloneable, because we
+                        // store a copy of each part's future in the `state` var.  This comes in
+                        // handy below when processing the end of the multipart file.
+                        let part_fut = async move {
+                            // Make sure the future that initiatlizes multipart upload has
+                            // completed.  If not, calling `upload_part` on the uploader will fail
+                            init_fut.await
+                                .map_err(|e| {
+                                    crate::error::TarFileStartMultipartFileSnafu {}.into_error(e)
+                                })?;
+
+                            let len = data.len();
+                            debug!(%key, ?part, len, "Uploading file part");
+                            uploader.upload_part(part, data).await?;
+
+                            progress.object_part_uploaded(&key, len);
+                            total_object_bytes.fetch_add(len as u64, Ordering::SeqCst);
+
+                            Ok(())
+                        }.map_err(|e| {
+                            // We can't use the `shared` combinator unless the Ok and Err types are
+                            // both clonable.
+                            Arc::new(e)
+                        }).shared();
+
+                        state.part_upload_futs.push(part_fut.clone());
+
+                        // But the Arc<S3TarError> stored in `part_fut` won't fly here since all of
+                        // the other match arms use a regular S3TarError error type.  We've
+                        // introduced a special case for this
+                        part_fut
+                            .map_err(|e| {
+                            crate::error::TarFilePartUploadSnafu { }.into_error(e)
+                            })
+                            .boxed()
+                    }
+
+                    TarEntryComponent::EndMultipartFile => {
+                        let uploader = state
+                            .current_uploader
+                            .take()
+                            .expect("BUG: Got FilePart without StartMultipartFile");
+                        let last_part = state
+                            .last_multipart_uploaded
+                            .take()
+                            .expect("BUG: Missing last_multipart_uploaded");
+                        let key = state.current_key.clone().expect("BUG: Missing current_key");
+                        let total_objects = state.total_objects.clone();
+                        let part_futs = std::mem::take(&mut state.part_upload_futs);
+
+                        async move {
+                            debug!(%key, "Completing multi-part file upload");
+
+                            // We can't complete the multi-part upload until all of the parts have
+                            // uploaded successfully.  That's why we hold all of the part futs in
+                            // the state variable.
+                            //
+                            // If there's actually an error uploading any of the parts, it's
+                            // unlikely execution will make it this far since they are polled in
+                            // order, and the failed part will be found before the failure reported
+                            // by this call.  However it seems like a bad practice to just ignore
+                            // an error here.
+                            //
+                            // The ugliness with `TarFilePartUploadSnafu` is necessary for the same
+                            // reason it's used to wrap an error in the previous match arm.
+                            futures::future::try_join_all(part_futs).await
+                                .map_err(|e| {
+                                    crate::error::TarFilePartUploadSnafu {}.into_error(e)
+                                })?;
+
+                            // Now all parts are uploaded, so we can finish the multi-part upload
+                            uploader.finish().await?;
+
+                            let len = last_part.end;
 
                             progress.object_uploaded(&key, len);
-                            total_objects += 1;
-                            total_object_bytes += len;
-                        }
-                        Ok(Err(e)) => {
-                            // The async upload task reported an error
-                            error!(path = %path.display(), len, %key, "Async upload failed while performing multipart upload");
+                            total_objects.fetch_add(1, Ordering::SeqCst);
 
-                            return Err(e);
+                            Ok(())
                         }
-                        Err(_) => {
-                            // Something went wrong; the async upload task must have panicked
-                            // because it dropped the sender before sending a result
-                            return crate::error::AsyncObjectWriterPanicSnafu {}.fail();
-                        }
+                        .boxed()
                     }
+                };
 
-                    if loop_result.is_ok() {
-                        debug!(path = %path.display(), len, %key, "Finished multipart file upload");
-                    } else {
-                        error!(path = %path.display(), len, %key, "Multipart upload error; aborting processing task");
-                    }
+                // The `scan` combinator expects a future that returns an Option<T>, where T in our
+                // case is the future that processes the component
+                futures::future::ready(Some(fut))
+            },
+        );
 
-                    loop_result?;
-                }
-                TarEntryComponent::FilePart { .. } | TarEntryComponent::EndMultipartFile { .. } => {
-                    // These components should never be sent other than following a
-                    // StartMultipartFile so to see them here is a bug
-                    unreachable!()
-                }
-            }
-        }
+        // XXX: This hack should not be required.  But if this isn't here, I get the following
+        // compile error:
+        //
+        // error: higher-ranked lifetime error
+        //   --> ssstar/src/extract.rs:513:17
+        //    |
+        //513 | /                 tokio::spawn(async move {
+        //514 | |                     debug!("Starting tar entry processor task");
+        //515 | |
+        //516 | |                     match Self::process_tar_entries(
+        //...   |
+        //536 | |                     }
+        //537 | |                 })
+        //    | |__________________^
+        //    |
+        //    = note: could not prove `for<'r, 's> impl for<'r, 's> futures::Future<Output = std::result::Result<(usize, u64, std::time::Duration), S3TarError>>: std::marker::Send`
+        //
+        // This seems to be a Rust compiler bug: https://github.com/rust-lang/rust/issues/102211
+        //
+        // It is happening as of this writing with Rust 1.64.0.  Once this bug is fixed, the
+        // following line can be safely removed
+        let futs = futs.boxed();
+
+        // Consume the stream of futures, polling only some of them at a time to control
+        // concurrency
+        let mut futs = futs.buffered(max_concurrent_requests);
+
+        while let Some(()) = futs.try_next().await? {}
 
         debug!("Entry sender dropped; no more tar entries to process");
 
         Ok((
-            total_objects,
-            total_object_bytes,
-            started.expect("BUG: unconditionally set in loop").elapsed(),
+            total_objects.load(Ordering::SeqCst),
+            total_object_bytes.load(Ordering::SeqCst),
+            started.elapsed(),
         ))
     }
 }
@@ -920,11 +1046,15 @@ enum TarEntryComponent {
     ///
     /// The threshold for treating a file as multipart is based on the multipart threshold in
     /// [`crate::Config`]
-    StartMultipartFile { path: PathBuf, len: u64 },
+    StartMultipartFile {
+        path: PathBuf,
+        len: u64,
+        parts: Vec<Range<u64>>,
+    },
 
     /// A part of a multipart file
-    FilePart { data: Bytes },
+    FilePart { part: Range<u64>, data: Bytes },
 
-    /// The final part of a multipart file
-    EndMultipartFile { data: Bytes },
+    /// Marks the end of a multipart file
+    EndMultipartFile,
 }

@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Fixes
+
+* The performance of `extract` writing many files to object storage should be improved now.  In general, the `extract`
+  speed should more or less match the performance of the `create` operation which produced the archive to be extracted.
+
+## Breaking Changes
+
+* Increment MSRV to 1.64
+
 ### Dependencies
 
 * Update AWS SDK for S3 from 0.17 to 0.19

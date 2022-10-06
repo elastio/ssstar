@@ -1,5 +1,5 @@
 use snafu::prelude::*;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use url::Url;
 
 pub type Result<T, E = S3TarError> = std::result::Result<T, E>;
@@ -181,4 +181,14 @@ pub enum S3TarError {
     DateTimeConvert {
         source: aws_smithy_types_convert::date_time::Error,
     },
+    // These are special error cases needed because of a technicality with how futures work.  We
+    // need to be able to report an error that is actually represented as an `Arc<S3TarError>`.
+    // Fortunately the `Error` trait is implemented for `Arc<T>` when `T` implements `Error`
+    #[snafu(display("Error initiating a multi-part upload"))]
+    TarFileStartMultipartFile { source: Arc<S3TarError> },
+
+    #[snafu(display(
+        "Error uploading byte range of an file from the tar archive to object storage"
+    ))]
+    TarFilePartUpload { source: Arc<S3TarError> },
 }

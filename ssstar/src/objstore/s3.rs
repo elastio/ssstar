@@ -1,4 +1,4 @@
-use super::{Bucket, ObjectStorage};
+use super::{Bucket, MultipartUploader, ObjectStorage};
 use crate::{create, Config, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::Credentials;
@@ -6,6 +6,8 @@ use aws_smithy_http::endpoint::Endpoint;
 use aws_types::region::Region;
 use futures::{Stream, StreamExt};
 use snafu::{prelude::*, IntoError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::{any::Any, ops::Range, sync::Arc};
 use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, oneshot};
@@ -582,6 +584,75 @@ impl S3Bucket {
             key
         }
     }
+
+    /// Compute what the multipart chunk size should be, based on the user's configured chunk size
+    /// but also informed by the estimated size of the object
+    fn compute_multipart_chunk_size(
+        &self,
+        key: &str,
+        size_hint: Option<u64>,
+    ) -> Result<Option<usize>> {
+        let multipart_chunk_size = self
+            .inner
+            .objstore
+            .inner
+            .config
+            .multipart_chunk_size
+            .get_bytes() as usize;
+
+        match size_hint {
+            None => {
+                // Hope that the final size of the object will be small enough that the configured
+                // chunk size is larger than 1/10,000th of the size of the whole object, but assume
+                // it will be large enough that we should use multipart
+                Ok(Some(multipart_chunk_size))
+            }
+            Some(size_hint) => {
+                if size_hint > 5 * (1024 * 1024 * 1024 * 1024u64) {
+                    // This is larger than the maximum allowed object size on S3
+                    return crate::error::ObjectTooLargeSnafu {
+                        bucket: self.inner.name.clone(),
+                        key: key.to_string(),
+                        size: size_hint,
+                    }
+                    .fail();
+                }
+
+                if size_hint
+                    > self
+                        .inner
+                        .objstore
+                        .inner
+                        .config
+                        .multipart_threshold
+                        .get_bytes() as u64
+                {
+                    // Object will be large enough to justify using multipart
+                    // Assuming the size hint is the upper bound of what's possible, how many parts
+                    // will the configured chunk size produce?
+                    if (size_hint + multipart_chunk_size as u64 - 1) / multipart_chunk_size as u64
+                        <= 10_000
+                    {
+                        // Object is small enough the requested chunk size can be used
+                        Ok(Some(multipart_chunk_size))
+                    } else {
+                        // Wow this is a very large object.  We're going to have to override the
+                        // chunk size to keep the object count under 10K
+                        let new_chunk_size = (size_hint + 9_999) / 10_000;
+
+                        warn!(key, size_hint, multipart_chunk_size, new_chunk_size,
+                            "New object size is so large that the requested chunk size will be overridden to keep the total chunk count under 10K");
+
+                        Ok(Some(new_chunk_size as usize))
+                    }
+                } else {
+                    // This object's expected size is so small there's no reason to do multipart at
+                    // all
+                    Ok(None)
+                }
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -937,6 +1008,46 @@ impl Bucket for S3Bucket {
         Ok(receiver)
     }
 
+    #[instrument(skip(self))]
+    fn partition_for_multipart_upload(
+        &self,
+        key: &str,
+        size: u64,
+    ) -> Result<Option<Vec<Range<u64>>>> {
+        if let Some(chunk_size) = self.compute_multipart_chunk_size(key, Some(size))? {
+            let mut parts =
+                Vec::with_capacity(((size + chunk_size as u64 - 1) / chunk_size as u64) as usize);
+            let mut offset = 0u64;
+            while offset < size {
+                let len = chunk_size as u64;
+                let len = if offset + len > size {
+                    size - offset
+                } else {
+                    len
+                };
+
+                let range = offset..offset + len;
+                parts.push(range);
+
+                offset += len;
+            }
+
+            Ok(Some(parts))
+        } else {
+            // Too small for multipart, don't waste my time
+            Ok(None)
+        }
+    }
+
+    #[instrument(skip(self))]
+    fn start_multipart_upload(
+        &self,
+        key: String,
+        parts: Vec<Range<u64>>,
+    ) -> Box<dyn MultipartUploader> {
+        Box::new(S3MultipartUploader::new(self.clone(), key, parts))
+    }
+
     #[instrument(skip(self, data), fields(len = data.len()))]
     async fn put_small_object(&self, key: String, data: bytes::Bytes) -> Result<()> {
         let key = Self::url_path_to_s3_path(&key).to_string();
@@ -976,52 +1087,8 @@ impl Bucket for S3Bucket {
         // more than 10K parts, then we need to use a larger chunk size.
         let key = Self::url_path_to_s3_path(&key).to_string();
         let config = &self.inner.objstore.inner.config;
-        let multipart_chunk_size = config.multipart_chunk_size.get_bytes() as usize;
 
-        let chunk_size = match size_hint {
-            None => {
-                // Hope that the final size of the object will be small enough that the configured
-                // chunk size is larger than 1/10,000th of the size of the whole object, but assume
-                // it will be large enough that we should use multipart
-                Some(multipart_chunk_size)
-            }
-            Some(size_hint) => {
-                if size_hint > 5 * (1024 * 1024 * 1024 * 1024u64) {
-                    // This is larger than the maximum allowed object size on S3
-                    return crate::error::ObjectTooLargeSnafu {
-                        bucket: self.inner.name.clone(),
-                        key: key.to_string(),
-                        size: size_hint,
-                    }
-                    .fail();
-                }
-
-                if size_hint > config.multipart_threshold.get_bytes() as u64 {
-                    // Object will be large enough to justify using multipart
-                    // Assuming the size hint is the upper bound of what's possible, how many parts
-                    // will the configured chunk size produce?
-                    if (size_hint + multipart_chunk_size as u64 - 1) / multipart_chunk_size as u64
-                        <= 10_000
-                    {
-                        // Object is small enough the requested chunk size can be used
-                        Some(multipart_chunk_size)
-                    } else {
-                        // Wow this is a very large object.  We're going to have to override the
-                        // chunk size to keep the object count under 10K
-                        let new_chunk_size = (size_hint + 9_999) / 10_000;
-
-                        warn!(%key, size_hint, multipart_chunk_size, new_chunk_size,
-                            "New object size is so large that the requested chunk size will be overridden to keep the total chunk count under 10K");
-
-                        Some(new_chunk_size as usize)
-                    }
-                } else {
-                    // This object's expected size is so small there's no reason to do multipart at
-                    // all
-                    None
-                }
-            }
-        };
+        let chunk_size = self.compute_multipart_chunk_size(&key, size_hint)?;
 
         // Create the writer and execute the worker task to process the data written to the stream.
         //
@@ -1121,6 +1188,239 @@ impl std::fmt::Debug for S3Bucket {
             .field("region", &self.inner.region)
             .field("client", &"<...>")
             .finish()
+    }
+}
+
+#[derive(Clone)]
+struct S3MultipartUploader {
+    inner: Arc<S3MultipartUploaderInner>,
+}
+struct S3MultipartUploaderInner {
+    bucket: S3Bucket,
+    client: aws_sdk_s3::Client,
+
+    key: String,
+
+    size: u64,
+
+    /// The ranges defining the parts to upload
+    parts: Vec<Range<u64>>,
+
+    /// The multipart upload ID issued by CreateMultipartUpload for this upload
+    upload_id: Mutex<Option<String>>,
+
+    /// The number of parts which have been successfully uploaded
+    completed_parts: Mutex<Vec<aws_sdk_s3::model::CompletedPart>>,
+
+    /// Flag indicating if the upload has been completed with a call to `finish`
+    finished: AtomicBool,
+}
+
+impl S3MultipartUploader {
+    #[instrument()]
+    fn new(bucket: S3Bucket, key: String, parts: Vec<Range<u64>>) -> Self {
+        // The size of the object should be the `end` of the last range.  While checking that also
+        // check invariants along the way.
+        let mut last_part: Option<&Range<u64>> = None;
+        assert!(parts.len() > 1);
+        for part in &parts {
+            match last_part {
+                Some(last_part) => {
+                    assert_eq!(last_part.end, part.start);
+                }
+                None => {
+                    assert_eq!(0, part.start);
+                }
+            }
+
+            last_part = Some(part);
+        }
+
+        let size = last_part.unwrap().end;
+
+        let client = bucket.inner.client.clone();
+
+        Self {
+            inner: Arc::new(S3MultipartUploaderInner {
+                bucket,
+                client,
+                key,
+                size,
+                parts,
+                upload_id: Mutex::new(None),
+                completed_parts: Mutex::new(Vec::new()),
+                finished: AtomicBool::new(false),
+            }),
+        }
+    }
+
+    /// Get the upload ID if `init` has run successfully, otherwise panic
+    fn upload_id(&self) -> String {
+        let guard = self.inner.upload_id.lock().unwrap();
+
+        guard
+            .clone()
+            .expect("BUG: No upload ID found; init has not been called")
+    }
+}
+
+#[async_trait::async_trait]
+impl MultipartUploader for S3MultipartUploader {
+    async fn init(&self) -> Result<()> {
+        debug!(
+            bucket = ?self.inner.bucket,
+            key = %self.inner.key,
+            size = self.inner.size,
+            "Starting multi-part upload"
+        );
+
+        let response = self
+            .inner
+            .client
+            .create_multipart_upload()
+            .bucket(&self.inner.bucket.inner.name)
+            .key(self.inner.key.clone())
+            .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
+            .send()
+            .await
+            .with_context(|_| crate::error::CreateMultipartUploadSnafu {
+                bucket: self.inner.bucket.inner.name.clone(),
+                key: self.inner.key.clone(),
+            })?;
+        let upload_id = response
+            .upload_id()
+            .expect("BUG: multi-part uploads always have upload ID")
+            .to_string();
+
+        let mut guard = self.inner.upload_id.lock().unwrap();
+        *guard = Some(upload_id);
+
+        Ok(())
+    }
+
+    fn parts(&self) -> &[Range<u64>] {
+        &self.inner.parts
+    }
+
+    #[instrument(skip(self, bytes), fields(key = %self.inner.key))]
+    async fn upload_part(&self, range: Range<u64>, bytes: bytes::Bytes) -> Result<()> {
+        let upload_id = self.upload_id();
+
+        // This range should exactly match a pre-determined part for this upload
+        let part_idx = match self
+            .inner
+            .parts
+            .binary_search_by_key(&(range.start, range.end), |r| (r.start, r.end))
+        {
+            Ok(index) => index,
+            Err(_) => {
+                // TODO: return an error
+                panic!("LOLWUT!");
+            }
+        };
+
+        // AWS part numbers start from 1, not 0
+        let part_number = part_idx + 1;
+
+        // TODO: compute SHA-256 hash of chunk and include in upload
+
+        let response = self
+            .inner
+            .client
+            .upload_part()
+            .bucket(self.inner.bucket.inner.name.clone())
+            .key(self.inner.key.clone())
+            .upload_id(upload_id)
+            .part_number(part_number as i32)
+            .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
+            .body(aws_sdk_s3::types::ByteStream::from(bytes))
+            .send()
+            .await
+            .with_context(|_| crate::error::UploadPartSnafu {
+                bucket: self.inner.bucket.inner.name.clone(),
+                key: self.inner.key.clone(),
+                part_number,
+            })?;
+
+        let e_tag = response
+            .e_tag()
+            .expect("BUG: uploaded part missing etag")
+            .to_string();
+
+        // XXX: When running against Minio, as of 30 Aug 2022 it doesn't have checksum
+        // support so thsi can be empty.  In that case, it won't be an error to omit the
+        // sha256 hash when completing the multipart upload
+        let sha256 = response.checksum_sha256().map(|hash| hash.to_string());
+
+        debug!(%e_tag, sha256 = sha256.as_deref().unwrap_or_default(), "Uploaded multi-part chunk");
+
+        // Once all of the uploads are done we must provide the information about each part
+        // to the CompleteMultipartUpload call, so retain the key bits here
+        let completed_part = aws_sdk_s3::model::CompletedPart::builder()
+            .e_tag(e_tag)
+            .set_checksum_sha256(sha256)
+            .part_number(part_number as i32)
+            .build();
+
+        let mut guard = self.inner.completed_parts.lock().unwrap();
+        guard.push(completed_part);
+
+        Ok(())
+    }
+
+    #[instrument(skip(self), fields(key = %self.inner.key, parts = self.inner.parts.len()))]
+    async fn finish(&self) -> Result<()> {
+        if self.inner.finished.load(Ordering::SeqCst) {
+            //`finish` was already called!
+            // TODO: error
+            panic!("BUG: finish already called");
+        }
+
+        let upload_id = self.upload_id();
+
+        // Remove the completed parts from the mutex and replace with an empty vec.  This is fine
+        // since `finish` should only ever be called once
+        let mut completed_parts = {
+            let mut guard = self.inner.completed_parts.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+
+        // Verify that all parts are uploaded
+
+        // TODO: return error if there are not completed parts
+        assert_eq!(completed_parts.len(), self.inner.parts.len());
+
+        // AWS is so lazy that they not only require we specify all of the parts we uploaded (even
+        // though they are all tied together with a unique upload ID), we also have to sort them in
+        // order of part number.  AWS could trivially do that on their side, even in what I imagine
+        // is their incredibly gnarly Java codebase, but they dont'.
+        completed_parts.sort_unstable_by_key(|part| part.part_number());
+
+        debug!("Completing multipart upload");
+
+        self.inner
+            .client
+            .complete_multipart_upload()
+            .bucket(self.inner.bucket.inner.name.clone())
+            .key(self.inner.key.clone())
+            .upload_id(upload_id)
+            .multipart_upload(
+                aws_sdk_s3::model::CompletedMultipartUpload::builder()
+                    .set_parts(Some(completed_parts))
+                    .build(),
+            )
+            .send()
+            .await
+            .with_context(|_| crate::error::CompleteMultipartUploadSnafu {
+                bucket: self.inner.bucket.inner.name.clone(),
+                key: self.inner.key.clone(),
+            })?;
+
+        debug!("Multipart upload completed");
+
+        self.inner.finished.store(true, Ordering::SeqCst);
+
+        Ok(())
     }
 }
 
