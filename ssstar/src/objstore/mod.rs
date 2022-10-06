@@ -119,7 +119,11 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     ///
     /// If `size` is larger than the maximum allowed object size for the object storage technology,
     /// this call will fail.
-    fn partition_for_multipart_upload(&self, key: &str, size: u64) -> Result<Option<Vec<Range<u64>>>>;
+    fn partition_for_multipart_upload(
+        &self,
+        key: &str,
+        size: u64,
+    ) -> Result<Option<Vec<Range<u64>>>>;
 
     /// Start a multipart upload of an object with a known size which has already been partitioned
     /// with a previous call to [`Self::partition_for_multipart_upload`].
@@ -128,7 +132,7 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     fn start_multipart_upload(
         &self,
         key: String,
-        parts: Vec<Range<u64>>
+        parts: Vec<Range<u64>>,
     ) -> Box<dyn MultipartUploader>;
 
     /// Upload a small object to object storage directly without any multi-part chunking or fancy
