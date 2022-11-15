@@ -17,23 +17,15 @@
 //! `tar` crate's API to read multiple non-overlapping ranges of each object in parallel.  So the
 //! extract process runs serially, producing objects to extract to object storage.
 //!
-//! If the archive contains mainly very large objects (100MB or larger), extract performance will
-//! still benefit from parallel processing because the uploading of those large objects, once their
-//! data is extracted, can be done in parallel using the
-//! [`crate::objstore::Bucket::create_object_writer`] method.  This will buffer chunks extracted
-//! from the tar archive and perform multiple parallel chunk uploads until the entire object has
-//! been extracted.  Assuming the upload to object storage is slower than the extracting of the
-//! archive from whatever source it came from, the use of parallel chunk uploads will improve
-//! performance compared to a non-parallel approach.
+//! Notwithstanding the limitations of the (blocking) `tar` crate's API, parallelism is employed as
+//! much as possible.  The reading of the input tar archive is performed in an async task (with
+//! multiple reads in parallel if reading from a file or object storage), then that data is sent to
+//! a blocking worker where `tar` is used to extract the archive.  Once `tar` has extracted part or
+//! all of a file, another async task takes over to actually upload that data to S3.
 //!
-//! However, for archives with many small (< the multipart threshold) objects, none of this
-//! parallelism will be available, so each object will be restored to object storage one at a time.
-//! For small objects, uploading the data takes no time at all, so the latency of the S3 API calls
-//! dominates.
-//!
-//! Perhaps a future enhancement will enhance this so that even in the case of many small objects
-//! the extract process can benefit from parallelism, but this is much more challenging than in the
-//! archive creation implementation.
+//! A single async task processes extracted small files in their entirety, and large files broken
+//! up into chunks, and does so in parallel.  This means that there should be minimal performance
+//! penalty when dealing with many small files compared to fewer large files in the archive.
 use crate::objstore::{Bucket, MultipartUploader, ObjectStorageFactory};
 use crate::tar::CountingReader;
 use crate::{Config, Result};
