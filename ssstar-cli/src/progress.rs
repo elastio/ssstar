@@ -1,6 +1,12 @@
 //! Implementations of progress callbacks that render progress bars
 use ssstar::Result;
-use std::{borrow::Cow, future::Future, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    future::Future,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 /// Display a spinner while some long-running but unmeasurable task is running, then hide the
 /// spinner when it finishes
@@ -344,6 +350,18 @@ struct ExtractProgressReport {
     /// Might or might not be the object being extracted, depends on the queue depth and whether
     /// the last extracted object has finished uploading
     upload_object: indicatif::ProgressBar,
+
+    /// The current upload progress for objects whose upload has started but not yet completed.
+    /// Additional detail needed to render meaningful progress information in the progress bar
+    object_upload_progress: Arc<Mutex<HashMap<String, ObjectUploadProgress>>>,
+}
+
+/// To render progress meaningfully, the progress reporter needs to keep track of the progress so
+/// far of each object being uploaded, since the progress callback methods themselves don't provide
+/// all of the necessary context needed to render the progress bars meaningfully
+struct ObjectUploadProgress {
+    total_size: u64,
+    total_bytes_uploaded: u64,
 }
 
 impl ExtractProgressReport {
@@ -394,6 +412,7 @@ impl ExtractProgressReport {
             raw_bytes_read,
             extract_object,
             upload_object,
+            object_upload_progress: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -471,14 +490,39 @@ impl ssstar::ExtractProgressCallback for ExtractProgressReport {
         self.upload_object.set_position(0);
         self.upload_object.set_length(size);
         self.upload_object.set_message(key.to_string());
+
+        let mut guard = self.object_upload_progress.lock().unwrap();
+        guard.insert(
+            key.to_string(),
+            ObjectUploadProgress {
+                total_size: size,
+                total_bytes_uploaded: 0,
+            },
+        );
     }
 
     fn object_part_uploaded(&self, key: &str, bytes: usize) {
-        self.upload_object.inc(bytes as u64);
+        let mut guard = self.object_upload_progress.lock().unwrap();
+        let mut progress = guard
+            .get_mut(key)
+            .unwrap_or_else(|| panic!("BUG: Object key '{key}' part uploaded event received before upload starting or after object uploaded"));
+        progress.total_bytes_uploaded += bytes as u64;
+
+        self.upload_object.set_length(progress.total_size);
+        self.upload_object
+            .set_position(progress.total_bytes_uploaded);
+        self.upload_object.set_message(key.to_string());
     }
 
     fn object_uploaded(&self, key: &str, size: u64) {
+        self.upload_object.set_length(size);
         self.upload_object.set_position(size);
+        self.upload_object.set_message(key.to_string());
+
+        // This object has finished uploading, so there should be no more `object_part_uploaded`
+        // messages
+        let mut guard = self.object_upload_progress.lock().unwrap();
+        guard.remove(key);
     }
 
     fn objects_uploaded(&self, total_objects: usize, total_object_bytes: u64, duration: Duration) {
