@@ -155,14 +155,14 @@ impl ObjectStorageFactory {
     #[allow(clippy::wrong_self_convention)] // For a factory object I think it's obvious what this means
     pub async fn from_url(config: Config, url: &Url) -> Result<Box<dyn ObjectStorage>> {
         if url.scheme() == "s3" {
-            Ok(Self::s3(config).await)
+            Self::s3(config).await
         } else {
             crate::error::UnsupportedObjectStorageSnafu { url: url.clone() }.fail()
         }
     }
 
     /// Return a [`ObjectStorage`] implementation for S3 or an S3-compatible API
-    pub async fn s3(config: Config) -> Box<dyn ObjectStorage> {
+    pub async fn s3(config: Config) -> Result<Box<dyn ObjectStorage>> {
         // NOTE: Earlier versions of this code used a `OnceCell` object to lazily create just one
         // `S3` instance for the entire process.  This unfortunately won't work when in cases where
         // multiple tokio runtimes are in use, such as for example in Rust tests.  Each `Client`
@@ -172,6 +172,6 @@ impl ObjectStorageFactory {
         //
         // The bug in question is https://github.com/hyperium/hyper/issues/2892, and it seems not
         // likely to be fixed any time soon.
-        Box::new(s3::S3::new(config.clone()).await)
+        Ok(Box::new(s3::S3::new(config.clone()).await?))
     }
 }
