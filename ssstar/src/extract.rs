@@ -33,7 +33,7 @@ use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use snafu::{prelude::*, IntoError};
 use std::future::Future;
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -165,6 +165,16 @@ impl SourceArchiveInternal {
         self,
         progress: Arc<dyn ExtractProgressCallback>,
     ) -> Result<CountingReader<Box<dyn Read + Send>>> {
+        // If we're reading from a local file, or from a stream (ie stdin) then we want to buffer
+        // those reads, since the `tar` crate isn't necessarily going to do a bunch of large
+        // sequential reads for optimal performance.
+        //
+        // Rather than expecting the user to set a separate tunable for this buffer size, we'll use
+        // a hard-coded value that seems reasonable for now.
+        //
+        // TODO: does this need to be runtime configurable?  Is this value a reasonable default?
+        let read_buffer_size = 256 * 1024;
+
         let reader: Box<dyn Read + Send> = match self {
             Self::ObjectStorage {
                 bucket,
@@ -191,9 +201,15 @@ impl SourceArchiveInternal {
                 .await
                 .with_context(|_| crate::error::SpawnBlockingSnafu {})??;
 
-                Box::new(file)
+                // Buffer reads from a file for better performance
+                Box::new(BufReader::with_capacity(read_buffer_size, file))
             }
-            SourceArchiveInternal::Reader(reader) => reader,
+            SourceArchiveInternal::Reader(reader) => {
+                // Especially when reading from an arbitrary stream (which is almost certainly
+                // stdin) buffering is important
+
+                Box::new(BufReader::with_capacity(read_buffer_size, reader))
+            }
         };
 
         // We need to wrap whatever the reader is in `CountingReader` both to report progress as
