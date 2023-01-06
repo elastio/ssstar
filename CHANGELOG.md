@@ -8,8 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-* Update AWS SDK for S3 from 0.17 to 0.22
-* Update AWS SDK common crates like `aws-config`, `aws-http`, etc from 0.47 to 0.52
+* Update AWS SDK for S3 from 0.17 to 0.19
+* Update AWS SDK common crates like `aws-config`, `aws-http`, etc from 0.47 to 0.49
+* Update AWS SDK for S3 from 0.19 to 0.22
+* Update AWS SDK common crates from 0.49 to 0.52
 
 ## 0.2.0 - 2-Sept-2022
 
