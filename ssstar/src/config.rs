@@ -24,7 +24,7 @@ pub struct Config {
     /// suitable, and is not secure enough to use in production.
     #[cfg_attr(
         feature = "clap",
-        clap(long, global = true, requires = "aws-secret-access-key")
+        clap(long, global = true, requires = "aws_secret_access_key")
     )]
     pub aws_access_key_id: Option<String>,
 
@@ -36,7 +36,7 @@ pub struct Config {
     /// suitable, and is not secure enough to use in production.
     #[cfg_attr(
         feature = "clap",
-        clap(long, global = true, requires = "aws-access-key-id")
+        clap(long, global = true, requires = "aws_access_key_id")
     )]
     pub aws_secret_access_key: Option<String>,
 
