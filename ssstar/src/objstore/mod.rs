@@ -83,7 +83,7 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
 
     /// Read some or all of an object in one operation.
     ///
-    /// Unlike [`Self::read_object_part`], thsi can be used for reading large objects, even up to
+    /// Unlike [`Self::read_object_part`], this can be used for reading large objects, even up to
     /// the max allowed 5TB size.  Internally, the single read request will be split into multiple
     /// smaller parts, read in parallel (up to the configured maximum concurrency).
     ///
@@ -96,6 +96,44 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
         version_id: Option<String>,
         byte_range: Range<u64>,
     ) -> Result<mpsc::Receiver<Result<bytes::Bytes>>>;
+
+    /// Given the known size of an object to upload, either define the ranges corresponding to the
+    /// parts that should be uploaded separately via multipart upload, or return `None` indicating
+    /// that the object isn't big enough to bother with multipart uploading.
+    ///
+    /// Applies the multipart threshold in the config provided at object storage init time.
+    ///
+    /// If the result is `Some`, the resulting Vec is guaranteed to have the following properties:
+    /// - Contains more than one element
+    /// - Ranges are sorted in ascending order of the `start` field
+    /// - The first range in the vec has a `start` field of 0
+    /// - The last range in the vec has an `end` field equal to `size`
+    /// - Each range is contiguous and non-overlapping with the previous range
+    ///
+    /// A `Some` result means the object should be uploaded using [`Self::start_multipart_upload`].
+    /// A `None` result means the object is small and should be uploaded with
+    /// [`Self::put_small_object`].
+    ///
+    /// If the size of the object is not known in advance, you must use
+    /// [`Self::create_object_writer`] which is quite a bit more complex.
+    ///
+    /// If `size` is larger than the maximum allowed object size for the object storage technology,
+    /// this call will fail.
+    fn partition_for_multipart_upload(
+        &self,
+        key: &str,
+        size: u64,
+    ) -> Result<Option<Vec<Range<u64>>>>;
+
+    /// Start a multipart upload of an object with a known size which has already been partitioned
+    /// with a previous call to [`Self::partition_for_multipart_upload`].
+    ///
+    /// The `parts` must have been returned from a prior call to `partition_for_multipart_upload`.
+    fn start_multipart_upload(
+        &self,
+        key: String,
+        parts: Vec<Range<u64>>,
+    ) -> Box<dyn MultipartUploader>;
 
     /// Upload a small object to object storage directly without any multi-part chunking or fancy
     /// asynchrony.
@@ -141,6 +179,43 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
 }
 
 dyn_clone::clone_trait_object!(Bucket);
+
+/// Multi-part upload client which provides a high-level API for uploading a large object with a
+/// known size to object storage in multiple parts.
+///
+/// Clones all share the same internal state, so multiple clones can be used to call `parts` and
+/// `upload_part` and the result will be as if all of those calls were made on a single instance.
+///
+/// `finish` must only be called once across all clones or an error ocurrs.
+#[async_trait::async_trait]
+pub(crate) trait MultipartUploader: DynClone + Sync + Send + 'static {
+    /// Initialize this multi-part upload.
+    ///
+    /// This must be called exactly once, and must be the first call made on this object.
+    /// `upload_part` and `finish` will panic if `init` isn't called first.
+    async fn init(&self) -> Result<()>;
+
+    /// The parts of the object to upload.
+    ///
+    /// These are always sorted in order from lowest to highest starting offset, and are always
+    /// contiguous and non-overlapping.  Parts can be uploaded in any order, as long as they are
+    /// all uploaded.
+    fn parts(&self) -> &[Range<u64>];
+
+    /// Upload a part of this object.
+    ///
+    /// `range` must match a range returned by [`Self::parts`], and `bytes` must have the same
+    /// length as the provided range.
+    async fn upload_part(&self, range: Range<u64>, bytes: bytes::Bytes) -> Result<()>;
+
+    /// Finish the multi-part upload, after all parts have been upload with [`Self::upload_part`].
+    ///
+    /// This must be called exactly once across all clones of an uploader instance, and only after
+    /// all parts have been uploaded with `upload_part`.
+    async fn finish(&self) -> Result<()>;
+}
+
+dyn_clone::clone_trait_object!(MultipartUploader);
 
 /// Singleton type which constructs [`ObjectStorage`] implementations on demand.
 #[derive(Debug)]

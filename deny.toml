@@ -227,6 +227,10 @@ skip-tree = [
 
     # old parking-lot still used as transitive dep of `again`
     { name = "parking_lot", version = "0.11.*", depth = 20 },
+
+    # an older windows-sys pulls in a ton of older duplicate crates.  This is a transitive dep
+    # of hyper-rustls brough in by the latest AWS SDK crates
+    { name = "windows-sys", version = "0.36.*", depth = 20 },
 ]
 
 # This section is considered when running `cargo deny check sources`.

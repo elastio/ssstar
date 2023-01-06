@@ -2,6 +2,7 @@
 //! update in order so we can write tests that verify behavior or progress reporting functionality.
 use more_asserts::*;
 use ssstar::{CreateProgressCallback, ExtractProgressCallback};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -737,6 +738,65 @@ impl TestExtractProgressCallback {
             self.object_upload_starting()
         );
         assert_eq!(self.extract_object_finished(), self.object_uploaded());
+
+        let object_upload_starting_events = self
+            .filter_events(ExtractProgressEventDiscriminants::ObjectUploadStarting)
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ObjectUploadStarting { key, size, .. },
+                    { (key, size) }
+                )
+            });
+
+        // Make a hash table where the key is the object key and the value is a vec of all
+        // object_part_uploaded events in the order in which they occurred for that particular
+        // object key
+        let mut object_part_uploaded_events: HashMap<String, Vec<usize>> = HashMap::new();
+
+        for (key, bytes) in self
+            .filter_events(ExtractProgressEventDiscriminants::ObjectPartUploaded)
+            .into_iter()
+            .map(|event| {
+                with_match!(
+                    event,
+                    ExtractProgressEvent::ObjectPartUploaded { key, bytes, .. },
+                    { (key, bytes) }
+                )
+            })
+        {
+            object_part_uploaded_events
+                .entry(key)
+                .or_default()
+                .push(bytes)
+        }
+
+        // Validate that object parts progress starts from 0 and increases smoothly to the total
+        // size.
+        //
+        // This is complex because we need to associate the object upload starting events with the corresponding part events
+        for (object_key, object_size) in object_upload_starting_events {
+            // Iterate over all of the object parts that pertain to this key
+            let mut object_part_total_bytes = 0u64;
+
+            for part_bytes in object_part_uploaded_events
+                .get(&object_key)
+                .unwrap_or_else(|| panic!("Object {object_key} has no object_part_uploaded events"))
+            {
+                assert_le!(
+                    object_part_total_bytes + (*part_bytes as u64),
+                    object_size,
+                    "Object '{object_key}'"
+                );
+                object_part_total_bytes += *part_bytes as u64;
+            }
+
+            assert_eq!(
+                object_part_total_bytes, object_size,
+                "Object '{object_key}'"
+            );
+        }
 
         // The number and size of objects uploaded should match the final message
         assert_eq!(self.objects_uploaded(), self.object_uploaded());
