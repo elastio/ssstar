@@ -24,9 +24,9 @@ shared-version = true
 
 [dependencies]
 again = "0.1.2"
-aws-config = "0.49.0"
-aws-sdk-s3 = { version = "0.19.0" }
-aws-types = { version = "0.49.0", features = ["hardcoded-credentials"] }
+aws-config = "0.52.0"
+aws-sdk-s3 = { version = "0.22.0" }
+aws-types = { version = "0.52.0", features = ["hardcoded-credentials"] }
 base64 = "0.13.0"
 byte-unit = "4.0.14"
 bytes = "1.2.1"

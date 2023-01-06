@@ -136,7 +136,7 @@ impl MinioServer {
             .await;
 
         let s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config)
-            .endpoint_resolver(Endpoint::immutable(self.endpoint_uri()));
+            .endpoint_resolver(Endpoint::immutable_uri(self.endpoint_uri()).unwrap());
 
         Ok(aws_sdk_s3::Client::from_conf(s3_config_builder.build()))
     }

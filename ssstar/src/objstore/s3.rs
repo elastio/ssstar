@@ -25,13 +25,13 @@ struct S3Inner {
 }
 
 impl S3 {
-    pub(super) async fn new(config: Config) -> Self {
-        Self {
+    pub(super) async fn new(config: Config) -> Result<Self> {
+        Ok(Self {
             inner: Arc::new(S3Inner {
-                client: make_s3_client(&config, None).await,
+                client: make_s3_client(&config, None).await?,
                 config,
             }),
-        }
+        })
     }
 }
 
@@ -118,7 +118,7 @@ impl S3Bucket {
             // This bucket is in a different region.  Oops.
             debug!(bucket = name, %region, "Bucket is in another region; repeating access validation in the correct region");
 
-            client = make_s3_client(&objstore.inner.config, region.clone()).await;
+            client = make_s3_client(&objstore.inner.config, region.clone()).await?;
 
             // Repeat the validation again.
             // This can fail if we don't have access, but if it reports again that the region is
@@ -224,18 +224,21 @@ impl S3Bucket {
                     .expect("BUG: all objects have keys")
                     .to_string();
 
-                let mut input_object = create::InputObject {
-                    bucket: dyn_clone::clone_box(self),
-                    key: key.clone(),
-                    version_id: None,
-                    size: object.size() as u64,
-                    timestamp: object
-                        .last_modified()
-                        .expect("Objects always have a last modified time")
-                        .to_chrono_utc(),
-                };
-
                 async move {
+                    let mut input_object = create::InputObject {
+                        bucket: dyn_clone::clone_box(self),
+                        key: key.clone(),
+                        version_id: None,
+                        size: object.size() as u64,
+                        timestamp: object
+                            .last_modified()
+                            .expect("Objects always have a last modified time")
+                            .to_chrono_utc()
+                            .map_err(|source| crate::error::S3TarError::DateTimeConvert {
+                                source,
+                            })?,
+                    };
+
                     // If versioning is enabled at the bucket level, make another API call to
                     // get the object's version.  It's a pity that the list operation doesn't
                     // include the version ID
@@ -507,11 +510,8 @@ impl S3Bucket {
                 // If the error here is that the object is not found, throw that specific
                 // error as it provides more meaningful context then the generic
                 // `HeadObjectSnafu` error
-                if let aws_sdk_s3::types::SdkError::ServiceError {
-                    err: service_err, ..
-                } = &err
-                {
-                    if service_err.is_not_found() {
+                if let aws_sdk_s3::types::SdkError::ServiceError(service_err) = &err {
+                    if service_err.err().is_not_found() {
                         return crate::error::ObjectNotFoundSnafu {
                             bucket: self.inner.name.clone(),
                             key: key.to_string(),
@@ -547,8 +547,8 @@ impl S3Bucket {
         name: &str,
     ) -> Result<Option<String>> {
         if let Err(e) = client.head_bucket().bucket(name).send().await {
-            if let aws_sdk_s3::types::SdkError::ServiceError { raw, .. } = &e {
-                let response = raw.http();
+            if let aws_sdk_s3::types::SdkError::ServiceError(err) = &e {
+                let response = err.raw().http();
                 if response.status() == http::StatusCode::MOVED_PERMANENTLY {
                     if let Some(value) = response.headers().get("x-amz-bucket-region") {
                         if let Ok(region) = value.to_str() {
@@ -631,7 +631,8 @@ impl Bucket for S3Bucket {
                     timestamp: metadata
                         .last_modified()
                         .expect("Objects always have a last modified time")
-                        .to_chrono_utc(),
+                        .to_chrono_utc()
+                        .map_err(|source| crate::error::S3TarError::DateTimeConvert { source })?,
                 }])
             }
             create::ObjectSelector::Prefix { prefix } => {
@@ -1125,7 +1126,10 @@ impl std::fmt::Debug for S3Bucket {
 
 /// Create a new AWS SDK S3 client, using either an explicit region or the default configuration
 /// deduced from the environment
-async fn make_s3_client(config: &Config, region: impl Into<Option<String>>) -> aws_sdk_s3::Client {
+async fn make_s3_client(
+    config: &Config,
+    region: impl Into<Option<String>>,
+) -> Result<aws_sdk_s3::Client> {
     let region = region.into();
 
     let region_provider = if let Some(region) = region {
@@ -1164,10 +1168,13 @@ async fn make_s3_client(config: &Config, region: impl Into<Option<String>>) -> a
             )
         });
 
-        s3_config_builder = s3_config_builder.endpoint_resolver(Endpoint::immutable(uri));
+        s3_config_builder = s3_config_builder.endpoint_resolver(
+            Endpoint::immutable_uri(uri)
+                .map_err(|source| crate::error::S3TarError::InvalidEndpoint { source })?,
+        );
     }
 
-    aws_sdk_s3::Client::from_conf(s3_config_builder.build())
+    Ok(aws_sdk_s3::Client::from_conf(s3_config_builder.build()))
 }
 
 /// Find the longest common prefix shared by two string slices.
@@ -1210,7 +1217,7 @@ mod tests {
 
     /// Make an [`S3Bucket`] instance which talks to a bucket stored on a local Minio server
     async fn open_bucket(server: &minio::MinioServer, bucket: &str) -> Result<S3Bucket> {
-        let s3 = S3::new(config_for_minio(server)).await;
+        let s3 = S3::new(config_for_minio(server)).await?;
 
         Ok(S3Bucket::new(&s3, bucket).await?)
     }

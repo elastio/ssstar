@@ -110,7 +110,7 @@ pub enum S3TarError {
     ReadByteStream {
         bucket: String,
         key: String,
-        source: aws_smithy_http::byte_stream::Error,
+        source: aws_smithy_http::byte_stream::error::Error,
     },
 
     #[snafu(display("Unable to create new object '{key}' in S3 bucket '{bucket}', because the expected size of {size} bytes is larger than the 5TB maximum object size"))]
@@ -171,4 +171,14 @@ pub enum S3TarError {
 
     #[snafu(display("Flush of writer failed"))]
     Flush { source: std::io::Error },
+
+    #[snafu(display("Invalid endpoint error"))]
+    InvalidEndpoint {
+        source: aws_smithy_http::endpoint::error::InvalidEndpointError,
+    },
+
+    #[snafu(display("DateTime convert  error"))]
+    DateTimeConvert {
+        source: aws_smithy_types_convert::date_time::Error,
+    },
 }
