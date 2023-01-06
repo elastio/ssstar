@@ -47,7 +47,7 @@ tokio = { version = "1.21.2", features = ["full"] }
 tokio-util = { version = "0.7.4", features = ["io", "io-util"] }
 tracing = "0.1.36"
 tracing-appender = "0.2.2"
-tracing-subscriber = "0.3.15"
+tracing-subscriber = "0.3.16"
 tracing-test = "0.2.3"
 typenum = "1.15.0"
 url = "2.3.0"
