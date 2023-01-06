@@ -340,153 +340,33 @@ where
         expected_keys.remove(relative_key);
 
         // Verify the object contents matches the expected data.
-        // This doesn't require reading the data because the extract operation enables SHA256 hash
-        // computation
-        let object_hash = {
-            let object = client
-                .head_object()
-                .bucket(bucket)
-                .key(&key)
-                .checksum_mode(aws_sdk_s3::model::ChecksumMode::Enabled)
-                .send()
-                .await?;
+        //
+        // This usually requires reading the entire object back and calculating the hash, even
+        // though the extract operation populates the SHA256 hash header.  That's not enough to
+        // avoid having to read the whole data because:
+        //
+        // - For multi-part uploads, the SHA256 checksum that gets reported is a hash of the hashes
+        // of all of the parts, not the hash of the contents.  When we generate test data we don't
+        // know how it will be broken up into parts, so we dont' know these per-part hashes.  That
+        // means for the biggest of objects (by nature multipart uploads are performed on objects
+        // large enough to exceed the multipart threshold) we still have to download and recompute
+        // the contents
+        // - As of January 2023, the latest MinIO is a new and interesting kind of broken.  It
+        // computes SHA256 hashes for multipart uploads, but it does it in a way that doesn't match
+        // the AWS behavior, so rather than try to guess which S3 impl this is and calculate the
+        // hash in the appropriate way, it's easier to just download the object and compute its
+        // hash.
+        let hash = {
+            let response = client.get_object().bucket(bucket).key(&key).send().await?;
 
-            dbg!(object.checksum_sha256)
-        };
-
-        debug!(%key, ?object_hash, "Verifying object hash");
-
-        let hash = match object_hash {
-            Some(object_hash) => {
-                // The hash is expressed as a base64 encoded string.
-                //
-                // It has two forms: if this object was uploaded as a single part, this string is
-                // literally the hash of the contents of the object.  But if it was uploaded using
-                // the multi-part API, the string is  base64 hash, followed by `-` and the number
-                // of parts.  In that case, the hash is a hash of all of the parts' hashes.
-                static MULTIPART_HASH: Lazy<Regex> = Lazy::new(|| {
-                    Regex::new(r##"^(?P<hash>(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{3}=|[A-Za-z\d+/]{2}==)?)-(?P<parts>\d+)$"##).unwrap()
-                });
-
-                if let Some(_captures) = MULTIPART_HASH.captures(&object_hash) {
-                    // XXX: The commented-out code below tries to use list_parts to compute the
-                    // aggregate hash of the object, but this doesn't work as of 30 Aug 2022
-                    // because the AWS SDK for Rust seems not to support `list_parts` correctly.  I
-                    // theorize that it's due to https://github.com/awslabs/smithy-rs/issues/1668
-                    // however I can't be sure.
-                    //
-                    // Since this is just test code, we know the objects in question will not be
-                    // particularly huge.  So in the case where the hash is a multipart hash, just
-                    // download the entire object from S3 and compute the hash anew.
-                    //
-                    // Someday perhaps restore this code and save a few seconds on integration test
-                    // runs
-
-                    debug!(%key, %object_hash, "Object hash is multi-part");
-
-                    /*
-                    // This is a multi-part hash so the validation of the hash just got more
-                    // complicated
-                    let hash_text = captures.name("hash").unwrap().as_str();
-
-                    // Decode the hash into binary
-                    let mut hash = [0u8; 32];
-
-                    hash.copy_from_slice(&base64::decode(hash_text).unwrap());
-
-                    // get the hashes of all of the parts in this object
-                    //
-                    // NOTE: There is a new GetObjectAttributes S3 API, but as of late August 2022
-                    // the AWS Rust SDK doesn't work right with it.  When callng it with multiple
-                    // object attributes, it fails with a signature mismatch error.  It seems
-                    // likely that the reason https://github.com/awslabs/aws-sdk-rust/issues/500
-                    // that was preventing the import of the latest S3 API model is probably to
-                    // blame.  As of now there is a `get_object_attributes` method in the Rust code
-                    // but it's broken so probably there's something in the S3 API model for this
-                    // function that isn't handled right in Rust.
-                    let mut parts = client
-                        .list_parts()
-                        .bucket(bucket)
-                        .key(&key)
-                        .into_paginator()
-                        .send();
-
-                    let mut hasher = sha2::Sha256::new();
-                    while let Some(page) = parts.try_next().await? {
-                        for part in page.parts.unwrap() {
-                            dbg!(part.part_number());
-
-                            let hash = base64::decode(part.checksum_sha256().unwrap())?;
-                            assert_eq!(hash.len(), sha2::Sha256::output_size());
-                            hasher.update(&hash);
-                            //hasher.update(object.checksum_sha256().unwrap().as_bytes());
-                        }
-                    }
-
-                    //for part in parts.parts().unwrap() {
-                    //    dbg!(part.part_number());
-                    //
-                    //    let hash = base64::decode(part.checksum_sha256().unwrap())?;
-                    //    assert_eq!(hash.len(), sha2::Sha256::output_size());
-                    //    hasher.update(&hash);
-                    //    //hasher.update(object.checksum_sha256().unwrap().as_bytes());
-                    //}
-
-                    // Computed the hash of all parts.
-                    let mut hash = [0u8; 32];
-
-                    hash.copy_from_slice(&hasher.finalize());
-                    hash
-                    */
-
-                    debug!(%key, %object_hash, "Using a nasty hack to download the whole object and compute its hash");
-
-                    let response = client.get_object().bucket(bucket).key(&key).send().await?;
-
-                    let mut body = response.body;
-                    let mut hasher = sha2::Sha256::new();
-                    while let Some(bytes) = body.try_next().await? {
-                        hasher.update(bytes);
-                    }
-                    let mut hash = [0u8; 32];
-                    hash.copy_from_slice(&hasher.finalize());
-                    hash
-                } else {
-                    // This is a simple hash
-                    debug!(%key, %object_hash, "Object isn't multi-part so object hash is a simple hash");
-
-                    // Decode into a binary hash and then compare
-                    let mut hash = [0u8; 32];
-
-                    hash.copy_from_slice(&base64::decode(object_hash).unwrap());
-                    hash
-                }
+            let mut body = response.body;
+            let mut hasher = sha2::Sha256::new();
+            while let Some(bytes) = body.try_next().await? {
+                hasher.update(bytes);
             }
-            None => {
-                // XXX: Actually the above statement would be correct, except that minio still doesn't
-                // support the enhanced checksum algorithms that S3 does.
-                //
-                // https://github.com/minio/minio/issues/14885
-                //
-                // As of Late August 2022, it was something they seem to be working on but it's not
-                // available yet.  Fuck!
-                //
-                // Fall back to reading the entire object contents
-                // While minio doesn't support the AWS checksum algorithms we have to compute the checksum
-                // by downloading the data
-                debug!(%key, "Object hash from API is None.  This is probably a shitty old version of Minio");
-
-                let response = client.get_object().bucket(bucket).key(&key).send().await?;
-
-                let mut body = response.body;
-                let mut hasher = sha2::Sha256::new();
-                while let Some(bytes) = body.try_next().await? {
-                    hasher.update(bytes);
-                }
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&hasher.finalize());
-                hash
-            }
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&hasher.finalize());
+            hash
         };
 
         assert_eq!(
