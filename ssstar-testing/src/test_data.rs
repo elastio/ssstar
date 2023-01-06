@@ -13,6 +13,7 @@ use std::{
     path::Path,
 };
 use tokio::io::AsyncReadExt;
+use tracing::{debug, instrument};
 use url::Url;
 
 /// Max concurrent S3 operations when dealing with test data
@@ -267,6 +268,7 @@ where
 /// Validate the test data in a hash map against an S3 bucket to which an archive containing the
 /// test data has been extracted.
 #[track_caller]
+#[instrument(err, skip_all, fields(bucket, prefix))]
 pub async fn validate_test_data_in_s3<Keys, Item>(
     client: &aws_sdk_s3::Client,
     test_data: &HashMap<String, TestObjectWithData>,
@@ -352,6 +354,8 @@ where
             dbg!(object.checksum_sha256)
         };
 
+        debug!(%key, ?object_hash, "Verifying object hash");
+
         let hash = match object_hash {
             Some(object_hash) => {
                 // The hash is expressed as a base64 encoded string.
@@ -377,6 +381,8 @@ where
                     //
                     // Someday perhaps restore this code and save a few seconds on integration test
                     // runs
+
+                    debug!(%key, %object_hash, "Object hash is multi-part");
 
                     /*
                     // This is a multi-part hash so the validation of the hash just got more
@@ -433,6 +439,8 @@ where
                     hash
                     */
 
+                    debug!(%key, %object_hash, "Using a nasty hack to download the whole object and compute its hash");
+
                     let response = client.get_object().bucket(bucket).key(&key).send().await?;
 
                     let mut body = response.body;
@@ -445,6 +453,7 @@ where
                     hash
                 } else {
                     // This is a simple hash
+                    debug!(%key, %object_hash, "Object isn't multi-part so object hash is a simple hash");
 
                     // Decode into a binary hash and then compare
                     let mut hash = [0u8; 32];
@@ -465,6 +474,8 @@ where
                 // Fall back to reading the entire object contents
                 // While minio doesn't support the AWS checksum algorithms we have to compute the checksum
                 // by downloading the data
+                debug!(%key, "Object hash from API is None.  This is probably a shitty old version of Minio");
+
                 let response = client.get_object().bucket(bucket).key(&key).send().await?;
 
                 let mut body = response.body;
