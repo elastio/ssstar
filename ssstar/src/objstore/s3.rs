@@ -224,19 +224,21 @@ impl S3Bucket {
                     .expect("BUG: all objects have keys")
                     .to_string();
 
-                let mut input_object = create::InputObject {
-                    bucket: dyn_clone::clone_box(self),
-                    key: key.clone(),
-                    version_id: None,
-                    size: object.size() as u64,
-                    timestamp: object
-                        .last_modified()
-                        .expect("Objects always have a last modified time")
-                        .to_chrono_utc()
-                        .unwrap(),
-                };
-
                 async move {
+                    let mut input_object = create::InputObject {
+                        bucket: dyn_clone::clone_box(self),
+                        key: key.clone(),
+                        version_id: None,
+                        size: object.size() as u64,
+                        timestamp: object
+                            .last_modified()
+                            .expect("Objects always have a last modified time")
+                            .to_chrono_utc()
+                            .map_err(|source| crate::error::S3TarError::DateTimeConvert {
+                                source,
+                            })?,
+                    };
+
                     // If versioning is enabled at the bucket level, make another API call to
                     // get the object's version.  It's a pity that the list operation doesn't
                     // include the version ID
@@ -630,7 +632,7 @@ impl Bucket for S3Bucket {
                         .last_modified()
                         .expect("Objects always have a last modified time")
                         .to_chrono_utc()
-                        .unwrap(),
+                        .map_err(|source| crate::error::S3TarError::DateTimeConvert { source })?,
                 }])
             }
             create::ObjectSelector::Prefix { prefix } => {
