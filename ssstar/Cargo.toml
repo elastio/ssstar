@@ -53,7 +53,7 @@ tokio = { version = "1.21.2", features = ["full"] }
 tokio-stream = "0.1.10"
 tokio-util = { version = "0.7.4", features = ["io", "io-util"] }
 tracing = "0.1.36"
-url = "2.3.0"
+url = "2.3.1"
 
 [dev-dependencies]
 ssstar-testing = { version = "0.2.1-dev", path = "../ssstar-testing" }
