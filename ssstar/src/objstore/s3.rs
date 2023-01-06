@@ -27,6 +27,8 @@ struct S3Inner {
 }
 
 impl S3 {
+    const MAX_OBJECT_SIZE: u64 = 5 * (1024 * 1024 * 1024 * 1024u64);
+
     pub(super) async fn new(config: Config) -> Result<Self> {
         Ok(Self {
             inner: Arc::new(S3Inner {
@@ -586,7 +588,12 @@ impl S3Bucket {
     }
 
     /// Compute what the multipart chunk size should be, based on the user's configured chunk size
-    /// but also informed by the estimated size of the object
+    /// but also informed by the estimated size of the object.
+    ///
+    /// The `size_hint` should be set to the actual size of the object to be uploaded, if known.
+    /// For objects whose size isn't yet known (such as streams) this can be `None`, but the final
+    /// size of the object will need to be smaller than or equal to 10,000 times the multipart chunk size,
+    /// since S3 supports up to 10K chunks per object.
     fn compute_multipart_chunk_size(
         &self,
         key: &str,
@@ -608,7 +615,7 @@ impl S3Bucket {
                 Ok(Some(multipart_chunk_size))
             }
             Some(size_hint) => {
-                if size_hint > 5 * (1024 * 1024 * 1024 * 1024u64) {
+                if size_hint > S3::MAX_OBJECT_SIZE {
                     // This is larger than the maximum allowed object size on S3
                     return crate::error::ObjectTooLargeSnafu {
                         bucket: self.inner.name.clone(),
