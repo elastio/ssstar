@@ -32,7 +32,7 @@ clap = {version = "3.2.19", features = ["derive"]}
 url = "2.3.0"
 byte-unit = "4.0.14"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter", "fmt", "local-time"] }
-tracing = "0.1.36"
+tracing = "0.1.37"
 tokio = { version = "1.21.2", features = ["full"] }
 color-eyre = "0.6.2"
 futures = "0.3.24"
