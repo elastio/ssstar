@@ -3,9 +3,7 @@ use crate::Result;
 use aws_sdk_s3::{types::ByteStream, Client};
 use bytes::Bytes;
 use futures::{StreamExt, TryStreamExt};
-use once_cell::sync::Lazy;
 use rand::prelude::*;
-use regex::Regex;
 use sha2::Digest;
 use std::{
     borrow::Cow,
@@ -13,7 +11,7 @@ use std::{
     path::Path,
 };
 use tokio::io::AsyncReadExt;
-use tracing::{debug, instrument};
+use tracing::instrument;
 use url::Url;
 
 /// Max concurrent S3 operations when dealing with test data
