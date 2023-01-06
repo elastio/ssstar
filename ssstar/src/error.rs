@@ -179,6 +179,6 @@ pub enum S3TarError {
 
     #[snafu(display("DateTime convert  error"))]
     DateTimeConvert {
-        source: aws_smithy_types_convert::date_time::Error
-    }
+        source: aws_smithy_types_convert::date_time::Error,
+    },
 }
