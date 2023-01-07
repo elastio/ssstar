@@ -30,7 +30,7 @@ jobs:
         toolchain: nightly
         profile: minimal
         override: true
-    - uses: Swatinem/rust-cache@v1
+    - uses: Swatinem/rust-cache@v2
     - uses: EmbarkStudios/cargo-deny-action@v1
       with:
         arguments: --all-features
@@ -60,7 +60,7 @@ jobs:
           profile: minimal
           override: true
           components: rustfmt
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         uses: actions-rs/cargo@v1
         with:
@@ -79,7 +79,7 @@ jobs:
           profile: minimal
           override: true
           components: clippy
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Clippy check
         uses: actions-rs/cargo@v1
         with:
@@ -107,7 +107,7 @@ jobs:
         with:
           profile: minimal
           override: true
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Cache the minio binary
         id: cache-minio
         uses: actions/cache@v3
@@ -178,7 +178,7 @@ jobs:
       - name: Install MUSL deps
         run: |
           sudo apt-get install musl musl-dev musl-tools
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Cargo build
         uses: actions-rs/cargo@v1
         with:
@@ -202,7 +202,7 @@ jobs:
           toolchain: stable
           profile: minimal
           override: true
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Check documentation
         env:
           RUSTDOCFLAGS: -D warnings
@@ -223,7 +223,7 @@ jobs:
           toolchain: stable
           profile: minimal
           override: true
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Install minio
         shell: bash
         run: |
