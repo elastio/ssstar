@@ -208,6 +208,9 @@ skip = [
 
     # aws SDK crate aws-smithy-types-convert still uses chrono 0.4 which uses time 0.1
     { name = "time", version = "0.1.*" },
+
+    # AWS SDK's rustls dependency chain still uses an old base64 crate
+    { name = "base64", version = "0.13.*" },
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive

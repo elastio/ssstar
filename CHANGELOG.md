@@ -6,13 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## Fixes
+### Fixes
+
+### Breaking Changes
+
+### Dependencies
+
+* Update `base64` to 0.20
+
+## 0.3.0 - 6-Jan-2023
+
+### Fixes
 
 * The performance of `extract` writing many files to object storage should be improved now.  In general, the `extract`
   speed should more or less match the performance of the `create` operation which produced the archive to be extracted.
 * Integration tests are updated to work correctly with the multipart checksum logic in recent MinIO releases.
 
-## Breaking Changes
+### Breaking Changes
 
 * Increment MSRV to 1.64
 
