@@ -56,7 +56,7 @@ pub enum SourceArchive {
     File(PathBuf),
 
     /// Read the tar archive to some arbitrary [`std::io::Read`] impl.
-    Reader(Box<dyn Read + Send>),
+    Reader(Box<dyn Read + Send + Sync>),
 }
 
 impl std::fmt::Debug for SourceArchive {
@@ -125,7 +125,7 @@ enum SourceArchiveInternal {
         metadata: std::fs::Metadata,
     },
 
-    Reader(Box<dyn Read + Send>),
+    Reader(Box<dyn Read + Send + Sync>),
 }
 
 impl std::fmt::Debug for SourceArchiveInternal {
@@ -164,7 +164,7 @@ impl SourceArchiveInternal {
     async fn into_reader(
         self,
         progress: Arc<dyn ExtractProgressCallback>,
-    ) -> Result<CountingReader<Box<dyn Read + Send>>> {
+    ) -> Result<CountingReader<Box<dyn Read + Send + Sync>>> {
         // If we're reading from a local file, or from a stream (ie stdin) then we want to buffer
         // those reads, since the `tar` crate isn't necessarily going to do a bunch of large
         // sequential reads for optimal performance.
@@ -175,7 +175,7 @@ impl SourceArchiveInternal {
         // TODO: does this need to be runtime configurable?  Is this value a reasonable default?
         let read_buffer_size = 256 * 1024;
 
-        let reader: Box<dyn Read + Send> = match self {
+        let reader: Box<dyn Read + Send + Sync> = match self {
             Self::ObjectStorage {
                 bucket,
                 key,
@@ -589,7 +589,7 @@ impl ExtractArchiveJob {
     fn read_tar_entries_blocking(
         target_bucket: Box<dyn Bucket>,
         filters: Vec<ExtractFilter>,
-        reader: CountingReader<Box<dyn Read + Send>>,
+        reader: CountingReader<Box<dyn Read + Send + Sync>>,
         progress: Arc<dyn ExtractProgressCallback>,
         entry_sender: mpsc::Sender<TarEntryComponent>,
     ) -> Result<()> {

@@ -19,7 +19,7 @@ use tokio::io::AsyncWrite;
 /// performed in a blocking worker thread, using [`tokio::task::spawn_blocking`].
 pub(crate) fn stream_as_reader<S>(stream: S) -> impl Read
 where
-    S: Stream<Item = Result<Bytes>> + Send + 'static,
+    S: Stream<Item = Result<Bytes>> + Send + Sync + 'static,
 {
     let handle = tokio::runtime::Handle::current();
 
@@ -48,7 +48,7 @@ where
 
 struct TryStreamReader {
     buffer: Option<Reader<Bytes>>,
-    stream: Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>>,
+    stream: Pin<Box<dyn Stream<Item = Result<Bytes>> + Send + Sync>>,
     handle: tokio::runtime::Handle,
 }
 
