@@ -6,9 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixes
+## 0.4.0 - 27-Jan-2023
 
 ### Breaking Changes
+
+* Add `Sync` trait requirement to the inner reader of `ssstar::SourceArchive::Reader(..)`.  Now, the inner reader
+  requires implementation of traits: `Read + Send + Sync`
 
 ### Dependencies
 
