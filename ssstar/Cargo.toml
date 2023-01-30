@@ -35,7 +35,7 @@ async-trait = "0.1.57"
 aws-config = "0.52.0"
 aws-sdk-s3 = { version = "0.22.0", features = ["rt-tokio"] }
 aws-smithy-http = "0.52.0"
-aws-smithy-types-convert = { version = "0.52.0", features = ["convert-chrono"] }
+aws-smithy-types-convert = { version = "0.54.1", features = ["convert-chrono"] }
 aws-types = { version = "0.52.0", features = ["hardcoded-credentials"] }
 byte-unit = { version = "4" }
 bytes = "1.2.1"
