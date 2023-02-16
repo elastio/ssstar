@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.4.1 - 16-Feb-2023
+
+* Add `aws_session_token` option for `ssstar::Config` to allow to use AWS temporal credentials
+
 ## 0.4.0 - 27-Jan-2023
 
 ### Breaking Changes

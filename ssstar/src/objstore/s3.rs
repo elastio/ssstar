@@ -1457,7 +1457,7 @@ async fn make_s3_client(
         aws_config_builder = aws_config_builder.credentials_provider(Credentials::from_keys(
             aws_access_key_id,
             aws_secret_access_key,
-            None,
+            config.aws_session_token.clone(),
         ));
     }
 
