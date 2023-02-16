@@ -40,9 +40,9 @@ pub struct Config {
     )]
     pub aws_secret_access_key: Option<String>,
 
-    /// Sets a session token
+    /// Sets AWS session token for AWS operations
     ///
-    /// This is required if you use temporally credentials
+    /// This is required if you use temporal credentials
     #[cfg_attr(
         feature = "clap",
         clap(long, global = true, requires = "aws_secret_access_key")
