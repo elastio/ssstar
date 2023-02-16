@@ -40,6 +40,15 @@ pub struct Config {
     )]
     pub aws_secret_access_key: Option<String>,
 
+    /// Sets a session token
+    ///
+    /// This is required if you use temporally credentials
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, global = true, requires = "aws_secret_access_key")
+    )]
+    pub aws_session_token: Option<String>,
+
     /// Use a custom S3 endpoint instead of AWS.
     ///
     /// Use this to operate on a non-Amazon S3-compatible service.  If this is set, the AWS region
@@ -93,6 +102,7 @@ impl Default for Config {
             aws_region: None,
             aws_access_key_id: None,
             aws_secret_access_key: None,
+            aws_session_token: None,
             s3_endpoint: None,
             multipart_chunk_size: byte_unit::Byte::from_bytes(8 * 1024 * 1024),
             multipart_threshold: byte_unit::Byte::from_bytes(8 * 1024 * 1024),
