@@ -3,7 +3,7 @@
 
 use crate::Result;
 use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_s3::{Credentials, Endpoint, Region};
+use aws_sdk_s3::{Credentials, Region};
 use color_eyre::eyre::eyre;
 use duct::Handle;
 use once_cell::sync::Lazy;
@@ -136,7 +136,7 @@ impl MinioServer {
             .await;
 
         let s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config)
-            .endpoint_resolver(Endpoint::immutable_uri(self.endpoint_uri()).unwrap());
+            .endpoint_url(self.endpoint_uri().to_string());
 
         Ok(aws_sdk_s3::Client::from_conf(s3_config_builder.build()))
     }
