@@ -16,13 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Update Tokio to 1.25 and tokio-util to 0.7.7
 * Update misc dependencies:
     * async-trait v0.1.57 -> v0.1.64
+    * aws-smith-http to 0.54.4
     * base64 v0.20.0 -> v0.21.0
     * bytes v1.2.1 -> v1.4.0
     * clap v4.0.32 -> v4.1.6
     * futures v0.3.24 -> v0.3.26
+    * http to 0.2.9
     * indicatif v0.17.1 -> v0.17.3
     * once_cell v1.15.0 -> v1.17.1
     * regex v1.6.0 -> v1.7.1
+    * tokio-stream to 0.1.12
     * tracing-test v0.2.3 -> v0.2.4
     * vergen v7.4.2 -> v7.5.1
     * which v4.3.0 -> v4.4.0
