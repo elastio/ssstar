@@ -2,7 +2,6 @@ use super::{Bucket, MultipartUploader, ObjectStorage};
 use crate::{create, Config, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::Credentials;
-use aws_smithy_http::endpoint::Endpoint;
 use aws_types::region::Region;
 use futures::{Stream, StreamExt};
 use snafu::{prelude::*, IntoError};
@@ -1466,19 +1465,7 @@ async fn make_s3_client(
     let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config)
         .app_name(aws_config::AppName::new(APP_NAME).expect("BUG: hard-coded app name is invalid"));
     if let Some(s3_endpoint) = &config.s3_endpoint {
-        // AWS SDK uses the `Uri` type in `http`.  There doesn't seem to be an easy way to
-        // convert between the two...
-        let uri: http::Uri = s3_endpoint.to_string().parse().unwrap_or_else(|e| {
-            panic!(
-                "BUG: URL '{}' could not be converted into Uri: {}",
-                s3_endpoint, e
-            )
-        });
-
-        s3_config_builder = s3_config_builder.endpoint_resolver(
-            Endpoint::immutable_uri(uri)
-                .map_err(|source| crate::error::S3TarError::InvalidEndpoint { source })?,
-        );
+        s3_config_builder = s3_config_builder.endpoint_url(s3_endpoint.to_string());
     }
 
     Ok(aws_sdk_s3::Client::from_conf(s3_config_builder.build()))
