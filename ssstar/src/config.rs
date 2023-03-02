@@ -91,6 +91,12 @@ pub struct Config {
     /// In case of multipart transfers, each chunk counts as a separate task.
     #[cfg_attr(feature = "clap", clap(long, default_value = "1000", global = true))]
     pub max_queue_size: usize,
+
+    /// The user agent to send to the S3 API endpoint.
+    ///
+    /// This defaults to something provided by the AWS SDK for Rust.
+    #[cfg_attr(feature = "clap", clap(long, global = true))]
+    pub user_agent: Option<String>,
 }
 
 impl Default for Config {
@@ -108,6 +114,7 @@ impl Default for Config {
             multipart_threshold: byte_unit::Byte::from_bytes(8 * 1024 * 1024),
             max_concurrent_requests: 10,
             max_queue_size: 1000,
+            user_agent: None,
         }
     }
 }
