@@ -2300,7 +2300,7 @@ checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "ssstar"
-version = "0.4.3-dev"
+version = "0.4.3"
 dependencies = [
  "assert_matches",
  "async-trait",
@@ -2344,7 +2344,7 @@ dependencies = [
 
 [[package]]
 name = "ssstar-cli"
-version = "0.4.3-dev"
+version = "0.4.3"
 dependencies = [
  "byte-unit",
  "clap",
@@ -2361,7 +2361,7 @@ dependencies = [
 
 [[package]]
 name = "ssstar-testing"
-version = "0.4.3-dev"
+version = "0.4.3"
 dependencies = [
  "again",
  "aws-config",

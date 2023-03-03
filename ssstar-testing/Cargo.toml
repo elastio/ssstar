@@ -1,6 +1,6 @@
 [package]
 name = "ssstar-testing"
-version = "0.4.3-dev"
+version = "0.4.3"
 edition = "2021"
 authors = ["Adam Nelson <adam@elastio.com>"]
 description = """
