@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.4.3 - 3-Mar-2023
+
+### Changes
+
+* Add new field `user_agent` to `Config` to allow callers to customize the user agent when talking to S3 APIs.
+
+  This is not a breaking change since `Config` is marked with the `non_exhaustive` attribute.
+
 ## 0.4.2 - 25-Feb-2023
 
 ### Breaking Changes
