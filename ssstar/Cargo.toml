@@ -39,7 +39,7 @@ aws-smithy-client = "0.54.4"
 aws-smithy-http = "0.54.4"
 aws-smithy-http-tower = "0.54.4"
 aws-smithy-types = "0.54.4"
-aws-smithy-types-convert = { version = "0.54.3", features = ["convert-chrono"] }
+aws-smithy-types-convert = { version = "0.54.4", features = ["convert-chrono"] }
 aws-types = { version = "0.54.1", features = [] }
 byte-unit = { version = "4" }
 bytes = "1.4.0"

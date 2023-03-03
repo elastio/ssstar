@@ -439,9 +439,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-types-convert"
-version = "0.54.3"
+version = "0.54.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3802a968773fec834925ed95ccf45e6d2b382e5a72dcb87561704e904f81772e"
+checksum = "e2c209718c72f778b0e866e59be9cbbe0e62e835db73ceca48383b1ffafd5340"
 dependencies = [
  "aws-smithy-types",
  "chrono",
