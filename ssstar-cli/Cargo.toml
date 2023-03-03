@@ -1,6 +1,6 @@
 [package]
 name = "ssstar-cli"
-version = "0.4.3"
+version = "0.4.4-dev"
 edition = "2021"
 authors = ["Adam Nelson <adam@elastio.com>"]
 description = """
@@ -27,7 +27,7 @@ path = "src/main.rs"
 name = "ssstar"
 
 [dependencies]
-ssstar = {version = "0.4.3", path = "../ssstar", features = ["clap"] }
+ssstar = {version = "0.4.4-dev", path = "../ssstar", features = ["clap"] }
 clap = { version = "4.1.6", features = ["derive","wrap_help"] }
 url = "2.3.0"
 byte-unit = "4.0.14"
