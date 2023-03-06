@@ -31,7 +31,7 @@ clap = ["dep:clap"]
 shared-version = true
 
 [dependencies]
-async-trait = "0.1.64"
+async-trait = "0.1.66"
 aws-config = "0.54.1"
 aws-credential-types = { version = "0.54.1", features = ["hardcoded-credentials"] }
 aws-sdk-s3 = { version = "0.24.0", features = ["rt-tokio"] }
