@@ -29,7 +29,7 @@ aws-credential-types = { version = "0.54.1", features = ["hardcoded-credentials"
 aws-sdk-s3 = { version = "0.24.0", features = ["rt-tokio"] }
 aws-types = { version = "0.54.1", features = [] }
 base64 = "0.21.0"
-byte-unit = "4.0.14"
+byte-unit = "4.0.19"
 bytes = "1.4.0"
 color-eyre = "0.6.2"
 digest = "0.10.3"

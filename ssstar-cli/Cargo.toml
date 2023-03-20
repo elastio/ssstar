@@ -30,7 +30,7 @@ name = "ssstar"
 ssstar = {version = "0.4.3-dev", path = "../ssstar", features = ["clap"] }
 clap = { version = "4.1.6", features = ["derive","wrap_help"] }
 url = "2.3.0"
-byte-unit = "4.0.14"
+byte-unit = "4.0.19"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter", "fmt", "local-time"] }
 tracing = "0.1.36"
 tokio = { version = "1.25.0", features = ["full"] }
