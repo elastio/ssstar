@@ -72,4 +72,4 @@ dotenv = "0.15.0"
 dotenv_codegen = "0.15.0"
 
 [build-dependencies]
-vergen = "7.5.1"
+vergen = "8.1.1"
