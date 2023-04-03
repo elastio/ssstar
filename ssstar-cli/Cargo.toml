@@ -35,7 +35,7 @@ tracing-subscriber = { version = "0.3.15", features = ["env-filter", "fmt", "loc
 tracing = "0.1.36"
 tokio = { version = "1.25.0", features = ["full"] }
 color-eyre = "0.6.2"
-futures = "0.3.26"
+futures = "0.3.28"
 indicatif = "0.17.3"
 
 [build-dependencies]
