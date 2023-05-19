@@ -1,6 +1,6 @@
 //! Create test data in S3-compatible object storage
 use crate::Result;
-use aws_sdk_s3::{types::ByteStream, Client};
+use aws_sdk_s3::{primitives::ByteStream, Client};
 use bytes::Bytes;
 use futures::{StreamExt, TryStreamExt};
 use rand::prelude::*;
@@ -149,7 +149,6 @@ pub async fn make_test_data_object(
 ///
 /// This assumes that the tar archive has been extracted to local storage somewhere for validation
 /// purposes.
-#[track_caller]
 pub async fn validate_test_data_in_dir<Keys, Item>(
     test_data: &HashMap<String, TestObjectWithData>,
     path: &Path,
@@ -265,7 +264,6 @@ where
 
 /// Validate the test data in a hash map against an S3 bucket to which an archive containing the
 /// test data has been extracted.
-#[track_caller]
 #[instrument(err, skip_all, fields(bucket, prefix))]
 pub async fn validate_test_data_in_s3<Keys, Item>(
     client: &aws_sdk_s3::Client,
@@ -292,7 +290,7 @@ where
     // 'Object' structs so we can process them one at a time
     let mut pages = pages.map(|result| {
         let page = result?;
-        let result: Result<Vec<aws_sdk_s3::model::Object>> = Ok(page.contents.unwrap_or_default());
+        let result: Result<Vec<aws_sdk_s3::types::Object>> = Ok(page.contents.unwrap_or_default());
 
         result
     });

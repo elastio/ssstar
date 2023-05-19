@@ -1,7 +1,7 @@
 use super::{Bucket, MultipartUploader, ObjectStorage};
 use crate::{create, Config, Result};
 use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_s3::Credentials;
+use aws_sdk_s3::config::Credentials;
 use aws_smithy_http::{middleware::MapRequest, operation};
 use aws_smithy_http_tower::map_request::MapRequestLayer;
 use aws_types::region::Region;
@@ -160,7 +160,7 @@ impl S3Bucket {
             })?;
 
         let versioning_enabled = match versioning.status {
-            Some(status) => status == aws_sdk_s3::model::BucketVersioningStatus::Enabled,
+            Some(status) => status == aws_sdk_s3::types::BucketVersioningStatus::Enabled,
             None => false,
         };
 
@@ -213,7 +213,7 @@ impl S3Bucket {
     /// maximum concurrency specified in [`crate::Config::max_concurrent_requests`]
     async fn objects_to_input_objects(
         &self,
-        mut pages: impl Stream<Item = Result<Vec<aws_sdk_s3::model::Object>>> + Unpin,
+        mut pages: impl Stream<Item = Result<Vec<aws_sdk_s3::types::Object>>> + Unpin,
     ) -> Result<Vec<create::InputObject>> {
         // Helpfully, the AWS Rust SDK provides conversions from their own internal DateTime type
         // to Chrono.
@@ -316,8 +316,8 @@ impl S3Bucket {
                     .key(&key)
                     .upload_id(upload_id)
                     .part_number(part_number as i32)
-                    .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
-                    .body(aws_sdk_s3::types::ByteStream::from(chunk.data))
+                    .checksum_algorithm(aws_sdk_s3::types::ChecksumAlgorithm::Sha256)
+                    .body(aws_sdk_s3::primitives::ByteStream::from(chunk.data))
                     .send()
                     .await
                     .with_context(|_| crate::error::UploadPartSnafu {
@@ -344,7 +344,7 @@ impl S3Bucket {
 
                 // Once all of the uploads are done we must provide the information about each part
                 // to the CompleteMultipartUpload call, so retain the key bits here
-                let completed_part = aws_sdk_s3::model::CompletedPart::builder()
+                let completed_part = aws_sdk_s3::types::CompletedPart::builder()
                     .e_tag(e_tag)
                     .set_checksum_sha256(sha256)
                     .part_number(part_number as i32)
@@ -393,7 +393,7 @@ impl S3Bucket {
             .key(key.clone())
             .upload_id(upload_id.clone())
             .multipart_upload(
-                aws_sdk_s3::model::CompletedMultipartUpload::builder()
+                aws_sdk_s3::types::CompletedMultipartUpload::builder()
                     .set_parts(Some(completed_parts))
                     .build(),
             )
@@ -506,7 +506,7 @@ impl S3Bucket {
         &self,
         key: String,
         version_id: Option<String>,
-    ) -> Result<aws_sdk_s3::output::HeadObjectOutput> {
+    ) -> Result<aws_sdk_s3::operation::head_object::HeadObjectOutput> {
         self.inner
             .client
             .head_object()
@@ -519,7 +519,7 @@ impl S3Bucket {
                 // If the error here is that the object is not found, throw that specific
                 // error as it provides more meaningful context then the generic
                 // `HeadObjectSnafu` error
-                if let aws_sdk_s3::types::SdkError::ServiceError(service_err) = &err {
+                if let aws_sdk_s3::error::SdkError::ServiceError(service_err) = &err {
                     if service_err.err().is_not_found() {
                         return crate::error::ObjectNotFoundSnafu {
                             bucket: self.inner.name.clone(),
@@ -556,7 +556,7 @@ impl S3Bucket {
         name: &str,
     ) -> Result<Option<String>> {
         if let Err(e) = client.head_bucket().bucket(name).send().await {
-            if let aws_sdk_s3::types::SdkError::ServiceError(err) = &e {
+            if let aws_sdk_s3::error::SdkError::ServiceError(err) = &e {
                 let response = err.raw().http();
                 if response.status() == http::StatusCode::MOVED_PERMANENTLY {
                     if let Some(value) = response.headers().get("x-amz-bucket-region") {
@@ -757,7 +757,7 @@ impl Bucket for S3Bucket {
                     // contains no objects (only child prefixes) then this will be None.  But this
                     // isn't the right place to report an error, since there might be other pages
                     // that do have contents.
-                    let result: Result<Vec<aws_sdk_s3::model::Object>> =
+                    let result: Result<Vec<aws_sdk_s3::types::Object>> =
                         Ok(page.contents.unwrap_or_default());
 
                     result
@@ -809,7 +809,7 @@ impl Bucket for S3Bucket {
                     //
                     // NOTE 2: `contents` can actually be `None` if there are no objects in the
                     // bucket.
-                    let result: Result<Vec<aws_sdk_s3::model::Object>> =
+                    let result: Result<Vec<aws_sdk_s3::types::Object>> =
                         Ok(page.contents.unwrap_or_default());
 
                     result
@@ -1069,8 +1069,8 @@ impl Bucket for S3Bucket {
             .put_object()
             .bucket(self.inner.name.clone())
             .key(key.clone())
-            .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
-            .body(aws_sdk_s3::types::ByteStream::from(data))
+            .checksum_algorithm(aws_sdk_s3::types::ChecksumAlgorithm::Sha256)
+            .body(aws_sdk_s3::primitives::ByteStream::from(data))
             .send()
             .await
             .with_context(|_| crate::error::PutObjectSnafu {
@@ -1116,7 +1116,7 @@ impl Bucket for S3Bucket {
                     .create_multipart_upload()
                     .bucket(&self.inner.name)
                     .key(key.clone())
-                    .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
+                    .checksum_algorithm(aws_sdk_s3::types::ChecksumAlgorithm::Sha256)
                     .send()
                     .await
                     .with_context(|_| crate::error::CreateMultipartUploadSnafu {
@@ -1222,7 +1222,7 @@ struct S3MultipartUploaderInner {
     upload_id: Mutex<Option<String>>,
 
     /// The number of parts which have been successfully uploaded
-    completed_parts: Mutex<Vec<aws_sdk_s3::model::CompletedPart>>,
+    completed_parts: Mutex<Vec<aws_sdk_s3::types::CompletedPart>>,
 
     /// Flag indicating if the upload has been completed with a call to `finish`
     finished: AtomicBool,
@@ -1292,7 +1292,7 @@ impl MultipartUploader for S3MultipartUploader {
             .create_multipart_upload()
             .bucket(&self.inner.bucket.inner.name)
             .key(self.inner.key.clone())
-            .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
+            .checksum_algorithm(aws_sdk_s3::types::ChecksumAlgorithm::Sha256)
             .send()
             .await
             .with_context(|_| crate::error::CreateMultipartUploadSnafu {
@@ -1344,8 +1344,8 @@ impl MultipartUploader for S3MultipartUploader {
             .key(self.inner.key.clone())
             .upload_id(upload_id)
             .part_number(part_number as i32)
-            .checksum_algorithm(aws_sdk_s3::model::ChecksumAlgorithm::Sha256)
-            .body(aws_sdk_s3::types::ByteStream::from(bytes))
+            .checksum_algorithm(aws_sdk_s3::types::ChecksumAlgorithm::Sha256)
+            .body(aws_sdk_s3::primitives::ByteStream::from(bytes))
             .send()
             .await
             .with_context(|_| crate::error::UploadPartSnafu {
@@ -1368,7 +1368,7 @@ impl MultipartUploader for S3MultipartUploader {
 
         // Once all of the uploads are done we must provide the information about each part
         // to the CompleteMultipartUpload call, so retain the key bits here
-        let completed_part = aws_sdk_s3::model::CompletedPart::builder()
+        let completed_part = aws_sdk_s3::types::CompletedPart::builder()
             .e_tag(e_tag)
             .set_checksum_sha256(sha256)
             .part_number(part_number as i32)
@@ -1417,7 +1417,7 @@ impl MultipartUploader for S3MultipartUploader {
             .key(self.inner.key.clone())
             .upload_id(upload_id)
             .multipart_upload(
-                aws_sdk_s3::model::CompletedMultipartUpload::builder()
+                aws_sdk_s3::types::CompletedMultipartUpload::builder()
                     .set_parts(Some(completed_parts))
                     .build(),
             )

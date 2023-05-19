@@ -24,20 +24,22 @@ pub enum S3TarError {
     ))]
     BucketInvalidOrNotAccessible {
         bucket: String,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::HeadBucketError>,
+        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::head_bucket::HeadBucketError>,
     },
 
     #[snafu(display("Error checking if versioning is enabled on S3 bucket '{bucket}'"))]
     GetBucketVersioning {
         bucket: String,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::GetBucketVersioningError>,
+        source: aws_sdk_s3::error::SdkError<
+            aws_sdk_s3::operation::get_bucket_versioning::GetBucketVersioningError,
+        >,
     },
 
     #[snafu(display("Error getting metadata about object '{key}' on S3 bucket '{bucket}'"))]
     HeadObject {
         bucket: String,
         key: String,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::HeadObjectError>,
+        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::head_object::HeadObjectError>,
     },
 
     #[snafu(display("Object '{key}' in S3 bucket '{bucket}' doesn't exist"))]
@@ -50,13 +52,15 @@ pub enum S3TarError {
     ListObjectsInPrefix {
         bucket: String,
         prefix: String,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::ListObjectsV2Error>,
+        source:
+            aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Error>,
     },
 
     #[snafu(display("Error listing objects in S3 bucket '{bucket}'"))]
     ListObjectsInBucket {
         bucket: String,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::ListObjectsV2Error>,
+        source:
+            aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Error>,
     },
 
     #[snafu(display("Error getting object '{key}'{} in S3 bucket '{bucket}'",
@@ -65,7 +69,7 @@ pub enum S3TarError {
         bucket: String,
         key: String,
         version_id: Option<String>,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::GetObjectError>,
+        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>,
     },
 
     #[snafu(display(
@@ -74,7 +78,9 @@ pub enum S3TarError {
     CreateMultipartUpload {
         bucket: String,
         key: String,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::CreateMultipartUploadError>,
+        source: aws_sdk_s3::error::SdkError<
+            aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError,
+        >,
     },
 
     #[snafu(display(
@@ -84,7 +90,7 @@ pub enum S3TarError {
         bucket: String,
         key: String,
         part_number: usize,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::UploadPartError>,
+        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::upload_part::UploadPartError>,
     },
 
     #[snafu(display(
@@ -93,14 +99,16 @@ pub enum S3TarError {
     CompleteMultipartUpload {
         bucket: String,
         key: String,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::CompleteMultipartUploadError>,
+        source: aws_sdk_s3::error::SdkError<
+            aws_sdk_s3::operation::complete_multipart_upload::CompleteMultipartUploadError,
+        >,
     },
 
     #[snafu(display("Error uploading object '{key}' in S3 bucket '{bucket}'"))]
     PutObject {
         bucket: String,
         key: String,
-        source: aws_sdk_s3::types::SdkError<aws_sdk_s3::error::PutObjectError>,
+        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>,
     },
 
     #[snafu(display("Caller abandoned upload of object '{key}' in S3 bucket '{bucket}' before any data was uploaded"))]
