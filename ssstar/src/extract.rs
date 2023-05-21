@@ -241,8 +241,12 @@ impl SourceArchiveInternal {
     }
 }
 
+/// A parsed filter string which can be used to select a subset of the objects in the archive.
+///
+/// This is not meant to be created directly; instead use the [`FromStr`] impl to parse a
+/// string into an extract filter
 #[derive(Debug)]
-enum ExtractFilter {
+pub enum ExtractFilter {
     Object { key: String },
     Prefix { prefix: String },
     Glob { pattern: glob::Pattern },
