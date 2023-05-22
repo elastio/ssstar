@@ -130,4 +130,3 @@ fn prepare_header(size: u64, entry_type: u8) -> Header {
 fn other(msg: &str) -> Error {
     Error::new(ErrorKind::Other, msg)
 }
-
