@@ -19,6 +19,11 @@ mod s3;
 /// of increasing the ref count on an `Arc`
 #[async_trait::async_trait]
 pub(crate) trait ObjectStorage: DynClone + std::fmt::Debug + Sync + Send + 'static {
+    /// A string that identifies the object storage technology this instance corresponds to.
+    ///
+    /// For example for S3 the string might be "s3"
+    fn typ(&self) -> &'static str;
+
     /// Given a URL that contains a bucket and might also contain an object key and version ID,
     /// extract all of those components.
     ///

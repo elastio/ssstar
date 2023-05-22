@@ -2,7 +2,7 @@
 //! contents can be validated against expected test data.
 use crate::Result;
 use std::path::Path;
-use tempdir::TempDir;
+use tempfile::TempDir;
 use tokio::io::AsyncRead;
 use url::Url;
 
@@ -14,7 +14,7 @@ pub async fn extract_tar_archive_from_reader<R: AsyncRead + Unpin + Send + 'stat
     // The tar crate operates only on blocking I/O so we'll need a bridge
     let bridge = tokio_util::io::SyncIoBridge::new(reader);
 
-    let temp_dir = tempdir::TempDir::new("ssstar-testing-tar")?;
+    let temp_dir = TempDir::new()?;
     let path = temp_dir.path().to_owned();
 
     tokio::task::spawn_blocking(move || {

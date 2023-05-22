@@ -3,7 +3,7 @@
 
 use crate::Result;
 use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_s3::{Credentials, Region};
+use aws_sdk_s3::config::Credentials;
 use color_eyre::eyre::eyre;
 use duct::Handle;
 use once_cell::sync::Lazy;
@@ -15,7 +15,7 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use tempdir::TempDir;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tracing::debug;
 use which::which;
@@ -128,7 +128,7 @@ impl MinioServer {
 
     /// Get [`Client`] instance that is configured to use this Minio server instance
     pub async fn aws_client(&self) -> Result<aws_sdk_s3::Client> {
-        let region_provider = RegionProviderChain::first_try(Region::new("us-east-1"));
+        let region_provider = RegionProviderChain::first_try("us-east-1");
         let aws_config = aws_config::from_env()
             .region(region_provider)
             .credentials_provider(Credentials::from_keys("minioadmin", "minioadmin", None))
@@ -199,8 +199,8 @@ impl MinioServer {
                 .put_bucket_versioning()
                 .bucket(bucket.clone())
                 .versioning_configuration(
-                    aws_sdk_s3::model::VersioningConfiguration::builder()
-                        .status(aws_sdk_s3::model::BucketVersioningStatus::Enabled)
+                    aws_sdk_s3::types::VersioningConfiguration::builder()
+                        .status(aws_sdk_s3::types::BucketVersioningStatus::Enabled)
                         .build(),
                 )
                 .send()
@@ -262,7 +262,7 @@ impl MinioServer {
     fn temp_data_dir() -> Result<TempDir> {
         let home = dirs::home_dir().ok_or_else(|| eyre!("Unable to determine home directory"))?;
 
-        Ok(TempDir::new_in(home, "ssstar-minio-temp")?)
+        Ok(tempfile::tempdir_in(home)?)
     }
 }
 

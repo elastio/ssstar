@@ -1,18 +1,18 @@
 [package]
-name = "ssstar-cli"
-version = "0.4.3-dev"
-edition = "2021"
-authors = ["Adam Nelson <adam@elastio.com>"]
+authors = { workspace = true }
+categories = { workspace = true }
 description = """
 Tar-like archive utility that creates and restores tar-compatible archives to and from S3 or S3-compatible storage.  ssstar is specifically designed to stream both input and output data so memory usage is minimal, while aggressive concurrency is used to maximize network throughput.
 """
-documentation = "https://github.com/elastio/ssstar"
-homepage = "https://github.com/elastio/ssstar"
-repository = "https://github.com/elastio/ssstar"
-keywords = ["tar", "s3", "archive"]
-categories = ["command-line-utilities", "filesystem"]
-license = "Apache-2.0 OR MIT"
-readme = "../README.md"
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+keywords = { workspace = true }
+license = { workspace = true }
+name = "ssstar-cli"
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
 
 [badges]
 maintenance = { status = "actively-developed" }
@@ -23,20 +23,21 @@ shared-version = true
 
 [[bin]]
 bench = false
-path = "src/main.rs"
-name = "ssstar"
+name  = "ssstar"
+path  = "src/main.rs"
 
 [dependencies]
-ssstar = {version = "0.4.3-dev", path = "../ssstar", features = ["clap"] }
-clap = { version = "4.1.6", features = ["derive","wrap_help"] }
-url = "2.3.0"
-byte-unit = "4.0.14"
-tracing-subscriber = { version = "0.3.15", features = ["env-filter", "fmt", "local-time"] }
-tracing = "0.1.36"
-tokio = { version = "1.25.0", features = ["full"] }
-color-eyre = "0.6.2"
-futures = "0.3.26"
-indicatif = "0.17.3"
+byte-unit          = { workspace = true }
+chrono             = { workspace = true }
+clap               = { workspace = true }
+color-eyre         = { workspace = true }
+futures            = { workspace = true }
+indicatif          = { workspace = true }
+ssstar             = { version = "0.4.4-dev", path = "../ssstar", features = ["clap"] }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+url                = { workspace = true }
 
 [build-dependencies]
-vergen = "7.5.1"
+vergen = { workspace = true }

@@ -14,7 +14,7 @@ use ssstar_testing::{minio, test_data};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::{path::Path, sync::Arc};
-use tempdir::TempDir;
+use tempfile::TempDir;
 use url::Url;
 
 /// Set up the ssstar config to use the specified Minio server
@@ -41,7 +41,7 @@ mod create {
     }
 
     fn tar_in_file() -> (TempDir, PathBuf, ssstar::TargetArchive) {
-        let tempdir = TempDir::new("ssstar-tests-tar").unwrap();
+        let tempdir = TempDir::new().unwrap();
         let path = tempdir.path().join("test.tar");
 
         let target_archive = ssstar::TargetArchive::File(path.clone());
@@ -483,7 +483,7 @@ mod extract {
             /// Create an archive containing all of the test data in the test bucket, stored in a temp directory
             /// created for that purpose
             async fn create_archive_on_disk(server: &minio::MinioServer, bucket: &str) -> Result<(TempDir, PathBuf)> {
-                let temp_dir = tempdir::TempDir::new("extract-test").unwrap();
+                let temp_dir = TempDir::new().unwrap();
                 let tar_path = temp_dir.path().join("test.tar");
                 let target_archive = ssstar::TargetArchive::File(tar_path.clone());
 
