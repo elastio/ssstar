@@ -127,6 +127,6 @@ fn prepare_header(size: u64, entry_type: u8) -> Header {
 }
 
 #[cfg(any(windows, target_arch = "wasm32"))]
-fn other(msg: &str) -> Error {
-    Error::new(ErrorKind::Other, msg)
+fn other(msg: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, msg)
 }
