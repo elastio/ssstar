@@ -12,7 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * Rename several `CreateProgressCallback` methods to remove the `tar_` prefix to reflect the fact that the archive might
 not be tar format in the future.
-* Change `CreateProgressCallback` trait to add data byte offset parameter to `archive_object_written` method
+* Change `CreateProgressCallback` trait to add data `byte_offset` and object `timestamp` parameters to `archive_object_written` method
+  
+  This is a bit of an abuse of the progress callback since this information is not needed for progress reporting and
+  instead will be used in Elastio to populate the index of the S3 backup, however it's an easy change to make that will
+  facilitate our initial indexing impl without having to wait for the new storage API to stabilize.
 
 ### Changes
 

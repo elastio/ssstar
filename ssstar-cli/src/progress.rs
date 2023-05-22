@@ -293,6 +293,7 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
         bucket: &str,
         key: &str,
         version_id: Option<&str>,
+        timestamp: chrono::DateTime<chrono::Utc>,
         byte_offset: u64,
         size: u64,
     ) {

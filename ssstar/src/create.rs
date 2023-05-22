@@ -39,6 +39,7 @@
 use crate::objstore::{Bucket, ObjectStorageFactory};
 use crate::tar::TarBuilderWrapper;
 use crate::{Config, Result};
+use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use itertools::Itertools;
 use snafu::prelude::*;
@@ -519,6 +520,7 @@ pub trait CreateProgressCallback: Sync + Send {
         bucket: &str,
         key: &str,
         version_id: Option<&str>,
+        timestamp: DateTime<Utc>,
         byte_offset: u64,
         size: u64,
     ) {
@@ -925,6 +927,7 @@ impl CreateArchiveJob {
                         part.input_object.bucket.name(),
                         &part.input_object.key,
                         part.input_object.version_id.as_deref(),
+                        part.input_object.timestamp,
                         data_range.start,
                         part.input_object.size,
                     );
