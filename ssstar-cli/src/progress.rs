@@ -293,6 +293,7 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
         bucket: &str,
         key: &str,
         version_id: Option<&str>,
+        byte_offset: u64,
         size: u64,
     ) {
         // Nothing to report

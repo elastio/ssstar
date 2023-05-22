@@ -508,6 +508,10 @@ pub trait CreateProgressCallback: Sync + Send {
 
     /// An entire input object was written successfully to a tar archive.
     ///
+    /// `byte_offset` is the byte offset in the archive stream where the data for this object
+    /// starts.  Data is guaranteed to be stored in one contiguous sequence, therefore it's
+    /// possible to find the data for this object from the `byte_offset` and `size` parameters.
+    ///
     /// That doesn't mean the data written has been uploaded to remote object storage yet, it could
     /// still be buffered locally.
     fn tar_archive_object_written(
@@ -515,6 +519,7 @@ pub trait CreateProgressCallback: Sync + Send {
         bucket: &str,
         key: &str,
         version_id: Option<&str>,
+        byte_offset: u64,
         size: u64,
     ) {
     }
@@ -903,7 +908,10 @@ impl CreateArchiveJob {
                     // All of the data for this object has been passed to the `blocking_reader`
                     // that `append_data` is reading.  Now we just wait for it to finish
                     drop(sender);
-                    append_fut.await?;
+                    let data_range = append_fut.await?;
+
+                    assert_eq!(part.input_object.size, data_range.end - data_range.start,
+                               "BUG: reported data range doesn't match the expected size of the object's data");
 
                     // Normally this is what we want to hear, but if the appender dropped
                     // the channel that means we weren't able to send all of the parts to
@@ -917,6 +925,7 @@ impl CreateArchiveJob {
                         part.input_object.bucket.name(),
                         &part.input_object.key,
                         part.input_object.version_id.as_deref(),
+                        data_range.start,
                         part.input_object.size,
                     );
 

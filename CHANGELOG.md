@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.5.0 - 22-May-2023
+
+### Breaking Changes
+
+* Change `CreateProgressCallback` trait to add data byte offset parameter to `tar_archive_object_written` method
+
+### Changes
+
+* Update AWS SDK crates from 0.54 to 0.55 and 0.24 to 0.27
+* Update to Rust version 1.69.0
+* Add new `storage` module with new public API for writing to custom archive formats instead of tar
+
+  This isn't actually implemented yet, but we're releasing the API in an experimental state to collect feedback.  This
+  new storage API is subject to change and should not be relied upon until we finalize it.  For now it's hidden behind
+  the `storage` feature and it not enabled by default.
+* Moved all dependencies to the workspace level to make it easier to update dependencies in the future.
+
 ## 0.4.3 - 3-Mar-2023
 
 ### Changes

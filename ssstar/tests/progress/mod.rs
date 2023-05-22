@@ -66,6 +66,7 @@ pub(crate) enum CreateProgressEvent {
         bucket: String,
         key: String,
         version_id: Option<String>,
+        byte_offset: u64,
         size: u64,
     },
 
@@ -580,12 +581,14 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         bucket: &str,
         key: &str,
         version_id: Option<&str>,
+        byte_offset: u64,
         size: u64,
     ) {
         self.report_event(CreateProgressEvent::TarArchiveObjectWritten {
             bucket: bucket.to_string(),
             key: key.to_string(),
             version_id: version_id.map(|id| id.to_string()),
+            byte_offset,
             size,
         });
     }
