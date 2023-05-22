@@ -26,6 +26,10 @@ maintenance = { status = "actively-developed" }
 # This obvviously requires taking a dependency on `clap` so it should only be enabled in a CLI that is using clap
 clap = ["dep:clap"]
 
+# Enable the (still experimental) new storage API to allow callers to define
+# their own archive formats to store objects read from object storage
+storage = []
+
 [package.metadata.release]
 # All crates share the same version and should be incremented together
 shared-version = true

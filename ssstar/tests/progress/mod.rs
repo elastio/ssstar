@@ -48,13 +48,13 @@ pub(crate) enum CreateProgressEvent {
         total_bytes: u64,
     },
 
-    TarArchiveInitialized {
+    ArchiveInitialized {
         total_objects: usize,
         total_bytes: u64,
         estimated_archive_size: u64,
     },
 
-    TarArchivePartWritten {
+    ArchivePartWritten {
         bucket: String,
         key: String,
         version_id: Option<String>,
@@ -62,7 +62,7 @@ pub(crate) enum CreateProgressEvent {
         part_size: usize,
     },
 
-    TarArchiveObjectWritten {
+    ArchiveObjectWritten {
         bucket: String,
         key: String,
         version_id: Option<String>,
@@ -70,19 +70,19 @@ pub(crate) enum CreateProgressEvent {
         size: u64,
     },
 
-    TarArchiveBytesWritten {
+    ArchiveBytesWritten {
         bytes_written: usize,
     },
 
-    TarArchiveWritesCompleted {
+    ArchiveWritesCompleted {
         total_bytes_written: u64,
     },
 
-    TarArchiveBytesUploaded {
+    ArchiveBytesUploaded {
         bytes_uploaded: usize,
     },
 
-    TarArchiveUploadCompleted {
+    ArchiveUploadCompleted {
         size: u64,
     },
 }
@@ -309,11 +309,11 @@ impl TestCreateProgressCallback {
     /// initialized event
     pub fn tar_archive_initialized(&self) -> (usize, u64, u64) {
         let event = self
-            .filter_single_event(CreateProgressEventDiscriminants::TarArchiveInitialized)
+            .filter_single_event(CreateProgressEventDiscriminants::ArchiveInitialized)
             .unwrap();
         with_match!(
             event,
-            CreateProgressEvent::TarArchiveInitialized {
+            CreateProgressEvent::ArchiveInitialized {
                 total_objects,
                 total_bytes,
                 estimated_archive_size
@@ -324,14 +324,14 @@ impl TestCreateProgressCallback {
 
     /// The number of archive part written events, and the total size of all of them combined
     pub fn tar_archive_part_written(&self) -> (usize, u64) {
-        let events = self.filter_events(CreateProgressEventDiscriminants::TarArchivePartWritten);
+        let events = self.filter_events(CreateProgressEventDiscriminants::ArchivePartWritten);
         let count = events.len();
         let sum = events
             .into_iter()
             .map(|event| {
                 with_match!(
                     event,
-                    CreateProgressEvent::TarArchivePartWritten { part_size, .. },
+                    CreateProgressEvent::ArchivePartWritten { part_size, .. },
                     { part_size as u64 }
                 )
             })
@@ -342,14 +342,14 @@ impl TestCreateProgressCallback {
 
     /// The number of archive object written events, and the total size of all of them combined
     pub fn tar_archive_object_written(&self) -> (usize, u64) {
-        let events = self.filter_events(CreateProgressEventDiscriminants::TarArchiveObjectWritten);
+        let events = self.filter_events(CreateProgressEventDiscriminants::ArchiveObjectWritten);
         let count = events.len();
         let sum = events
             .into_iter()
             .map(|event| {
                 with_match!(
                     event,
-                    CreateProgressEvent::TarArchiveObjectWritten { size, .. },
+                    CreateProgressEvent::ArchiveObjectWritten { size, .. },
                     { size }
                 )
             })
@@ -360,14 +360,14 @@ impl TestCreateProgressCallback {
 
     /// The number of archive bytes written events, and the total size of all of them combined
     pub fn tar_archive_bytes_written(&self) -> (usize, u64) {
-        let events = self.filter_events(CreateProgressEventDiscriminants::TarArchiveBytesWritten);
+        let events = self.filter_events(CreateProgressEventDiscriminants::ArchiveBytesWritten);
         let count = events.len();
         let sum = events
             .into_iter()
             .map(|event| {
                 with_match!(
                     event,
-                    CreateProgressEvent::TarArchiveBytesWritten { bytes_written, .. },
+                    CreateProgressEvent::ArchiveBytesWritten { bytes_written, .. },
                     { bytes_written as u64 }
                 )
             })
@@ -380,11 +380,11 @@ impl TestCreateProgressCallback {
     /// process
     pub fn tar_archive_writes_completed(&self) -> u64 {
         let event = self
-            .filter_single_event(CreateProgressEventDiscriminants::TarArchiveWritesCompleted)
+            .filter_single_event(CreateProgressEventDiscriminants::ArchiveWritesCompleted)
             .unwrap();
         with_match!(
             event,
-            CreateProgressEvent::TarArchiveWritesCompleted {
+            CreateProgressEvent::ArchiveWritesCompleted {
                 total_bytes_written
             },
             { total_bytes_written }
@@ -393,14 +393,14 @@ impl TestCreateProgressCallback {
 
     /// The number of archive bytes uploaded events, and the total size of all of them combined
     pub fn tar_archive_bytes_uploaded(&self) -> (usize, u64) {
-        let events = self.filter_events(CreateProgressEventDiscriminants::TarArchiveBytesUploaded);
+        let events = self.filter_events(CreateProgressEventDiscriminants::ArchiveBytesUploaded);
         let count = events.len();
         let sum = events
             .into_iter()
             .map(|event| {
                 with_match!(
                     event,
-                    CreateProgressEvent::TarArchiveBytesUploaded { bytes_uploaded, .. },
+                    CreateProgressEvent::ArchiveBytesUploaded { bytes_uploaded, .. },
                     { bytes_uploaded as u64 }
                 )
             })
@@ -413,11 +413,11 @@ impl TestCreateProgressCallback {
     /// process
     pub fn tar_archive_upload_completed(&self) -> u64 {
         let event = self
-            .filter_single_event(CreateProgressEventDiscriminants::TarArchiveUploadCompleted)
+            .filter_single_event(CreateProgressEventDiscriminants::ArchiveUploadCompleted)
             .unwrap();
         with_match!(
             event,
-            CreateProgressEvent::TarArchiveUploadCompleted { size },
+            CreateProgressEvent::ArchiveUploadCompleted { size },
             { size }
         )
     }
@@ -546,20 +546,20 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         self.report_event(CreateProgressEvent::InputObjectsDownloadCompleted { total_bytes });
     }
 
-    fn tar_archive_initialized(
+    fn archive_initialized(
         &self,
         total_objects: usize,
         total_bytes: u64,
         estimated_archive_size: u64,
     ) {
-        self.report_event(CreateProgressEvent::TarArchiveInitialized {
+        self.report_event(CreateProgressEvent::ArchiveInitialized {
             total_objects,
             total_bytes,
             estimated_archive_size,
         });
     }
 
-    fn tar_archive_part_written(
+    fn archive_part_written(
         &self,
         bucket: &str,
         key: &str,
@@ -567,7 +567,7 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         part_number: usize,
         part_size: usize,
     ) {
-        self.report_event(CreateProgressEvent::TarArchivePartWritten {
+        self.report_event(CreateProgressEvent::ArchivePartWritten {
             bucket: bucket.to_string(),
             key: key.to_string(),
             version_id: version_id.map(|id| id.to_string()),
@@ -576,7 +576,7 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         });
     }
 
-    fn tar_archive_object_written(
+    fn archive_object_written(
         &self,
         bucket: &str,
         key: &str,
@@ -584,7 +584,7 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         byte_offset: u64,
         size: u64,
     ) {
-        self.report_event(CreateProgressEvent::TarArchiveObjectWritten {
+        self.report_event(CreateProgressEvent::ArchiveObjectWritten {
             bucket: bucket.to_string(),
             key: key.to_string(),
             version_id: version_id.map(|id| id.to_string()),
@@ -593,22 +593,22 @@ impl CreateProgressCallback for TestCreateProgressCallback {
         });
     }
 
-    fn tar_archive_bytes_written(&self, bytes_written: usize) {
-        self.report_event(CreateProgressEvent::TarArchiveBytesWritten { bytes_written });
+    fn archive_bytes_written(&self, bytes_written: usize) {
+        self.report_event(CreateProgressEvent::ArchiveBytesWritten { bytes_written });
     }
 
-    fn tar_archive_writes_completed(&self, total_bytes_written: u64) {
-        self.report_event(CreateProgressEvent::TarArchiveWritesCompleted {
+    fn archive_writes_completed(&self, total_bytes_written: u64) {
+        self.report_event(CreateProgressEvent::ArchiveWritesCompleted {
             total_bytes_written,
         });
     }
 
-    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: usize) {
-        self.report_event(CreateProgressEvent::TarArchiveBytesUploaded { bytes_uploaded });
+    fn archive_bytes_uploaded(&self, bytes_uploaded: usize) {
+        self.report_event(CreateProgressEvent::ArchiveBytesUploaded { bytes_uploaded });
     }
 
-    fn tar_archive_upload_completed(&self, size: u64, _duration: Duration) {
-        self.report_event(CreateProgressEvent::TarArchiveUploadCompleted { size });
+    fn archive_upload_completed(&self, size: u64, _duration: Duration) {
+        self.report_event(CreateProgressEvent::ArchiveUploadCompleted { size });
     }
 }
 

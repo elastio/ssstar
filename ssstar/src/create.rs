@@ -484,7 +484,7 @@ pub trait CreateProgressCallback: Sync + Send {
     /// written to this archive.  It's hard to predict the actual tar archive size without getting
     /// into the weeds of the tar archive format, but an estimated size is provided to help scale
     /// progress bars in the UI.
-    fn tar_archive_initialized(
+    fn archive_initialized(
         &self,
         total_objects: usize,
         total_bytes: u64,
@@ -496,7 +496,7 @@ pub trait CreateProgressCallback: Sync + Send {
     ///
     /// That doesn't mean the data written has been uploaded to remote object storage yet, it could
     /// still be buffered locally.
-    fn tar_archive_part_written(
+    fn archive_part_written(
         &self,
         bucket: &str,
         key: &str,
@@ -514,7 +514,7 @@ pub trait CreateProgressCallback: Sync + Send {
     ///
     /// That doesn't mean the data written has been uploaded to remote object storage yet, it could
     /// still be buffered locally.
-    fn tar_archive_object_written(
+    fn archive_object_written(
         &self,
         bucket: &str,
         key: &str,
@@ -534,13 +534,13 @@ pub trait CreateProgressCallback: Sync + Send {
     ///
     /// This event can be reported from a synchronous context, because it's captured at the level
     /// of the [`std::io::Write`] implementation itself.
-    fn tar_archive_bytes_written(&self, bytes_written: usize) {}
+    fn archive_bytes_written(&self, bytes_written: usize) {}
 
     /// The tar archive has been completed, and will see no further writes.
     ///
     /// There may still be upload activity in process, uploading previous tar writes to object
     /// storage from a local buffer.
-    fn tar_archive_writes_completed(&self, total_bytes_written: u64) {}
+    fn archive_writes_completed(&self, total_bytes_written: u64) {}
 
     /// Some bytes have been uploaded to the tar archive in object storage.
     ///
@@ -548,7 +548,7 @@ pub trait CreateProgressCallback: Sync + Send {
     /// The receiver of this event will need to maintain a running total if one is desired.
     ///
     /// If the tar archive is not being directed to object storage, then this event will never fire
-    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: usize) {}
+    fn archive_bytes_uploaded(&self, bytes_uploaded: usize) {}
 
     /// The tar archive's previously completed writes have all been flushed from their buffers and
     /// uploaded to object storage (or a file or a stream dependng on where the tar archive is
@@ -557,7 +557,7 @@ pub trait CreateProgressCallback: Sync + Send {
     /// This is the final event that can happen.  Once this event fires, the job is done.
     ///
     /// If the tar archive is not being directed to object storage, then this event will never fire
-    fn tar_archive_upload_completed(&self, size: u64, duration: Duration) {}
+    fn archive_upload_completed(&self, size: u64, duration: Duration) {}
 }
 
 /// A job which will create a new tar archive from object store inputs.
@@ -654,7 +654,7 @@ impl CreateArchiveJob {
 
                 tokio::spawn(async move {
                     while let Some(bytes_uploaded) = progress_receiver.recv().await {
-                        progress.tar_archive_bytes_uploaded(bytes_uploaded);
+                        progress.archive_bytes_uploaded(bytes_uploaded);
                     }
                 });
 
@@ -674,7 +674,7 @@ impl CreateArchiveJob {
         let blocking_writer = crate::async_bridge::async_write_as_writer(writer);
         let tar_builder = TarBuilderWrapper::new(blocking_writer, progress.clone());
 
-        progress.tar_archive_initialized(total_objects, total_bytes, approx_archive_size);
+        progress.archive_initialized(total_objects, total_bytes, approx_archive_size);
 
         // Break up the input objects into one or more individual tasks (so we can use multipart
         // download for the large objects), which we will then evaluate in parallel.
@@ -864,7 +864,7 @@ impl CreateArchiveJob {
                             tar_archive_writes_started = Some(Instant::now());
                         }
 
-                        progress.tar_archive_part_written(
+                        progress.archive_part_written(
                             part.input_object.bucket.name(),
                             &part.input_object.key,
                             part.input_object.version_id.as_deref(),
@@ -889,7 +889,7 @@ impl CreateArchiveJob {
                                 appender_aborted = true;
                                 break;
                             } else {
-                                progress.tar_archive_part_written(
+                                progress.archive_part_written(
                                     next_part.input_object.bucket.name(),
                                     &next_part.input_object.key,
                                     next_part.input_object.version_id.as_deref(),
@@ -921,7 +921,7 @@ impl CreateArchiveJob {
                         "BUG: data channel for writing to tar archive was closed without any error"
                     );
 
-                    progress.tar_archive_object_written(
+                    progress.archive_object_written(
                         part.input_object.bucket.name(),
                         &part.input_object.key,
                         part.input_object.version_id.as_deref(),
@@ -940,7 +940,7 @@ impl CreateArchiveJob {
         // Finalize the tar archive
         let bytes_written = tar_builder.finish_and_close().await?;
 
-        progress.tar_archive_writes_completed(bytes_written);
+        progress.archive_writes_completed(bytes_written);
 
         // If the target archive was also an object on object storage, then there's still a
         // background async task that is taking the bytes written by the tar Builder, buffering
@@ -956,7 +956,7 @@ impl CreateArchiveJob {
                     let elapsed = tar_archive_writes_started
                         .expect("BUG: is set unconditionally during tar writes")
                         .elapsed();
-                    progress.tar_archive_upload_completed(bytes_written, elapsed);
+                    progress.archive_upload_completed(bytes_written, elapsed);
 
                     Ok(())
                 }

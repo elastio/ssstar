@@ -271,7 +271,7 @@ impl<W: std::io::Write + Send + 'static> std::io::Write for CountingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let bytes_written = self.inner.write(buf)?;
 
-        self.progress.tar_archive_bytes_written(bytes_written);
+        self.progress.archive_bytes_written(bytes_written);
         self.total_bytes_written += bytes_written as u64;
 
         Ok(bytes_written)

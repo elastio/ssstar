@@ -257,7 +257,7 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
             .finish_with_message(format!("Done ({total_bytes}, {bytes_per_second})"));
     }
 
-    fn tar_archive_initialized(
+    fn archive_initialized(
         &self,
         total_objects: usize,
         total_bytes: u64,
@@ -275,7 +275,7 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
             .set_length(estimated_archive_size);
     }
 
-    fn tar_archive_part_written(
+    fn archive_part_written(
         &self,
         bucket: &str,
         key: &str,
@@ -288,7 +288,7 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
             .set_message(format!("{} (part {})", key, part_number));
     }
 
-    fn tar_archive_object_written(
+    fn archive_object_written(
         &self,
         bucket: &str,
         key: &str,
@@ -299,26 +299,26 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
         // Nothing to report
     }
 
-    fn tar_archive_bytes_written(&self, bytes_written: usize) {
+    fn archive_bytes_written(&self, bytes_written: usize) {
         self.total_bytes_written_to_archive
             .inc(bytes_written as u64);
         self.total_bytes_written_to_archive.set_message("Writing")
     }
 
-    fn tar_archive_writes_completed(&self, total_bytes_written: u64) {
+    fn archive_writes_completed(&self, total_bytes_written: u64) {
         self.input_bytes_written_to_archive
             .finish_with_message("All input objects written");
         self.total_bytes_written_to_archive
             .finish_with_message("Archive writes completed");
     }
 
-    fn tar_archive_bytes_uploaded(&self, bytes_uploaded: usize) {
+    fn archive_bytes_uploaded(&self, bytes_uploaded: usize) {
         self.archive_bytes_uploaded.inc(bytes_uploaded as u64);
         self.archive_bytes_uploaded
             .set_message("Upload in progress");
     }
 
-    fn tar_archive_upload_completed(&self, size: u64, duration: Duration) {
+    fn archive_upload_completed(&self, size: u64, duration: Duration) {
         let bytes_per_second = (size as f64 / duration.as_secs_f64()) as u64;
         let bytes_per_second = indicatif::BinaryBytes(bytes_per_second);
         let duration = indicatif::HumanDuration(duration);
