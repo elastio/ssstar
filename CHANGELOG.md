@@ -22,6 +22,8 @@ not be tar format in the future.
 
 * Update AWS SDK crates from 0.54 to 0.55 and 0.24 to 0.27
 * Update to Rust version 1.69.0
+* Update to `rust-cache` action v2
+* Remove `coverage` GHA job since it's consistently broken and the `tarpaulin` GHA seems abandoned
 * Replace deprecated `tempfile` dependency with `tempdir`.  This is a dev-only dependency so this shouldn't have any
 runtime impact.
 * Add new `storage` module with new public API for writing to custom archive formats instead of tar
