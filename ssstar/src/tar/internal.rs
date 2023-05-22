@@ -14,8 +14,6 @@ use std::io;
 use std::io::prelude::*;
 #[cfg(unix)]
 use std::os::unix::prelude::*;
-#[cfg(windows)]
-use std::os::windows::prelude::*;
 use std::path::Path;
 use std::str;
 use tar::{EntryType, Header};
@@ -127,3 +125,9 @@ fn prepare_header(size: u64, entry_type: u8) -> Header {
     header.set_cksum();
     header
 }
+
+#[cfg(any(windows, target_arch = "wasm32"))]
+fn other(msg: &str) -> Error {
+    Error::new(ErrorKind::Other, msg)
+}
+
