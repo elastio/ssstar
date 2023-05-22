@@ -4,12 +4,15 @@ use crate::{create, extract};
 use futures::FutureExt;
 use snafu::{IntoError, ResultExt};
 use std::io::Write;
+use std::ops::Range;
 use std::{
     future::Future,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
+
+mod internal;
 
 /// Wraps a [`tar::Builder`] and ensures it never attempts blocking write operations in an async
 /// context.
@@ -28,12 +31,14 @@ use tracing::{error, warn};
 /// context.
 pub(crate) struct TarBuilderWrapper<W: std::io::Write + Send + 'static> {
     builder: Option<Arc<Mutex<tar::Builder<CountingWriter<W>>>>>,
+    current_byte_offset: Arc<Mutex<u64>>,
 }
 
 impl<W: std::io::Write + Send + 'static> Clone for TarBuilderWrapper<W> {
     fn clone(&self) -> Self {
         Self {
             builder: self.builder.clone(),
+            current_byte_offset: self.current_byte_offset.clone(),
         }
     }
 }
@@ -81,23 +86,84 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
 
         Self {
             builder: Some(Arc::new(Mutex::new(tar::Builder::new(writer)))),
+            current_byte_offset: Arc::new(Mutex::new(0)),
         }
     }
 
     /// Spawn a blocking task to append data to the tar archive, but don't wait for the task to
     /// finish
+    ///
+    /// Returns the range of bytes in the resulting `tar` archive where the data for this
+    /// particular file are stored.  This can be useful later to construct an index of the contents
+    /// of the archive without having to read the archive itself.
     pub fn spawn_append_data(
         &self,
         mut header: tar::Header,
         path: impl Into<PathBuf>,
         data: impl std::io::Read + Send + 'static,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<Range<u64>>> {
         let path = path.into();
 
+        // Need a `Read` impl that counts the bytes read, so we can use that to calculate how many
+        // bytes were written to the  tar archive
+        //
+        // We have a type `CoutingReader` which does this defined in this module, but that's meant
+        // for reporting progress reading *from* the tar archive.  In this case we don't want to
+        // generate any progress reporting, we just need a way to know how much data was appended
+        // for this object, and since `data` is just an opaque `Read` impl we have no other way to
+        // know its length.
+        struct CountingReader<R> {
+            inner: R,
+            bytes_read: u64,
+        }
+
+        impl<R: std::io::Read> std::io::Read for CountingReader<R> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let result = self.inner.read(buf);
+
+                if let Ok(bytes_read) = &result {
+                    self.bytes_read += *bytes_read as u64;
+                }
+
+                result
+            }
+        }
+
+        let current_byte_offset = self.current_byte_offset.clone();
         let append_fut = self.with_builder_mut(move |builder| {
+            let mut reader = CountingReader {
+                inner: data,
+                bytes_read: 0,
+            };
             builder
-                .append_data(&mut header, path, data)
-                .with_context(|_| crate::error::TarAppendDataSnafu {})
+                .append_data(&mut header, &path, &mut reader)
+                .with_context(|_| crate::error::TarAppendDataSnafu {})?;
+
+            // Use some copy-pasted code from the `tar` crate's internals to figure out how big the
+            // header is for this tar entry
+            let header_len = internal::calculate_header_size(header, &path)
+                .with_context(|_| crate::error::TarAppendDataSnafu {})?
+                as u64;
+
+            let data_len: u64 = reader.bytes_read;
+
+            let remaining = 512 - (data_len % 512);
+            let zero_pad = if remaining < 512 { remaining } else { 0 };
+
+            let mut guard = current_byte_offset.lock().unwrap();
+
+            // The data for this object was stored after the header and before any zero-padding
+            debug!(
+                header_len,
+                data_len,
+                zero_pad,
+                current_byte_offset = *guard,
+                "appended data to archive"
+            );
+            let data_range = (*guard + header_len)..(*guard + header_len + data_len);
+            *guard += header_len + data_len + zero_pad;
+
+            Ok(data_range)
         });
 
         async move { append_fut.await }
@@ -247,5 +313,144 @@ impl<R: std::io::Read + Send + 'static> std::io::Read for CountingReader<R> {
         self.total_bytes_read += bytes_read as u64;
 
         Ok(bytes_read)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::ThreadRng;
+    use rand::{
+        distributions::{Alphanumeric, Standard},
+        Rng,
+    };
+    use std::io::{Cursor, Read, Seek};
+    use std::path::PathBuf;
+
+    struct TestTarData {
+        path: PathBuf,
+        data: Vec<u8>,
+    }
+
+    impl TestTarData {
+        fn generate_random(rng: &mut ThreadRng) -> Self {
+            // First generate a random file path.  The max length should be > 512 bytes because
+            // that activates some special-case logic in the tar file format that we want to make
+            // sure we exercise here as well.
+            let path_length: usize = rng.gen_range(1..1024);
+            let random_string: String = rng
+                .sample_iter(&Alphanumeric)
+                .take(path_length)
+                .map(char::from)
+                .collect();
+            let path = PathBuf::from(random_string);
+
+            // Generate some random data as well.  Entries are zero-padded if their data doesn't
+            // end on a 512-byte boundary so we want to generate enough random samples to exercise
+            // the padding logic as well
+            //let data_length: usize = rng.gen_range(1..10_000_000);
+            //TODO: put back to 10MB before committing
+            let data_length: usize = rng.gen_range(1..1000);
+            let data: Vec<u8> = rng.sample_iter(&Standard).take(data_length).collect();
+
+            Self { path, data }
+        }
+    }
+
+    /// Make sure that the tar builder wrapper always computes the correct range of bytes where the
+    /// data is written to the tar archive.
+    #[tokio::test]
+    async fn builder_calculates_data_location() {
+        let mut rng = rand::thread_rng();
+
+        // Generate a bunch of test data for the tar archive
+        println!("Generating test data");
+        let test_data = (0..100)
+            .map(|_| TestTarData::generate_random(&mut rng))
+            .collect::<Vec<_>>();
+
+        let temp_dir = tempdir::TempDir::new("builder-test").unwrap();
+        let tar_path = temp_dir.path().join("test.tar");
+
+        let tar_file = std::fs::File::create(&tar_path).unwrap();
+
+        struct NoProgress;
+        impl crate::CreateProgressCallback for NoProgress {}
+        let builder = TarBuilderWrapper::new(tar_file, Arc::new(NoProgress));
+
+        println!("Writing test data to tar file {}", tar_path.display());
+        let mut test_data_with_ranges = Vec::with_capacity(test_data.len());
+        for test_data in test_data {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(test_data.data.len() as u64);
+            header.set_cksum();
+            let data_range = builder
+                .spawn_append_data(
+                    header,
+                    test_data.path.clone(),
+                    Cursor::new(test_data.data.clone()),
+                )
+                .await
+                .unwrap();
+
+            println!(
+                "Test data file '{}' with length {} is in tar file at {:?}",
+                test_data.path.display(),
+                test_data.data.len(),
+                data_range,
+            );
+            test_data_with_ranges.push((test_data, data_range));
+        }
+
+        builder.finish_and_close().await.unwrap();
+
+        println!(
+            "Reading back test data from tar file {}",
+            tar_path.display()
+        );
+
+        // Now verify that the data ranges computed by the builder actually contain the data for
+        // each item.  We'll do this by reading the tar file as just a regular file without
+        // decoding any of the tar structures.  If the ranges are correct we won't need to
+        // understand the tar format at all.
+        let mut tar_file = std::fs::File::open(&tar_path).unwrap();
+
+        for (test_data, data_range) in test_data_with_ranges {
+            let mut data = vec![0; test_data.data.len()];
+            println!(
+                "Validating data for test data file {} at {:?}",
+                test_data.path.display(),
+                data_range
+            );
+            tar_file
+                .seek(std::io::SeekFrom::Start(data_range.start as u64))
+                .unwrap();
+            tar_file.read_exact(&mut data).unwrap();
+            if data != test_data.data {
+                // Test has failed, but to help us understand the problem try to find
+                // `test_data.data` anywhere in the tar archive
+                tar_file.seek(std::io::SeekFrom::Start(0)).unwrap();
+                let mut entire_file = vec![];
+                tar_file.read_to_end(&mut entire_file).unwrap();
+
+                fn find_substring(entire_file: &[u8], substring: &[u8]) -> Option<usize> {
+                    let window_size = substring.len();
+
+                    entire_file
+                        .windows(window_size)
+                        .position(|window| window == substring)
+                }
+
+                if let Some(offset) = find_substring(&entire_file, &test_data.data) {
+                    panic!("Test data file {} contents was found at offset {} in tar file, but the builder claimed the data range is {:?}",
+                           test_data.path.display(), offset,
+                           data_range);
+                } else {
+                    panic!("Test data file {} contents was not found in tar file at all, but the builder claimed the data range is {:?}",
+                           test_data.path.display(),
+                           data_range);
+                }
+            }
+        }
     }
 }

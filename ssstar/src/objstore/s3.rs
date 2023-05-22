@@ -46,6 +46,10 @@ impl S3 {
 
 #[async_trait::async_trait]
 impl ObjectStorage for S3 {
+    fn typ(&self) -> &'static str {
+        "s3"
+    }
+
     async fn parse_url(
         &self,
         url: &Url,

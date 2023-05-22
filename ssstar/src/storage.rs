@@ -11,8 +11,46 @@ use bytes::Bytes;
 use dyn_clone::DynClone;
 use futures::Stream;
 use std::ops::Range;
-use std::path::PathBuf;
 use std::sync::Arc;
+
+/// Descriptor for an object in object storage that we want to be able to store in an archive and
+/// re-constitute into object storage from that archive later.
+///
+/// We support multiple object storage technologies, and each object storage technology has some
+/// specific object properties (ie, storage class in S3) which we want to be able to preserve when
+/// archiving, so this struct is necessarily somewhat generic.
+///
+/// Further complicating the shape of the type is that we support restoring a regular `tar` archive
+/// into object storage, which of course won't have any of the object storage-specific properties.
+/// So this struct is a place to capture metadata about an object storage object, all of which is
+/// optional.
+///
+/// Each object storage implementation (see [`crate::objstore`]) will be responsible for
+/// translating this generic representation of object metadata into its specific representation.
+#[derive(Clone, Debug, Default)]
+pub struct ArchiveObject {
+    pub obj_store_type: &'static str,
+    pub key: String,
+    pub version_id: Option<String>,
+    pub metadata: ArchiveObjectMetadata,
+}
+
+/// Metadata about an [`ArchiveObject`] minus the key and version ID which is common to all objects
+#[derive(Clone, Debug, Default)]
+pub struct ArchiveObjectMetadata {
+    pub size: u64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub tags: Vec<(String, Option<String>)>,
+
+    /// Additional metadata that is specific to the object storage implementation.
+    ///
+    /// Outside of that object store's implementation, no assumptions are made about this
+    /// additional metadata, only we attempt to preserve it in the archive.
+    ///
+    /// It's not guaranteed that this metadata will be preserved, so object storage implementations
+    /// must not fail if this metadata is not preserved.
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
 
 /// An implementation of an archive format that can be used to create an archive from object store
 /// objects, and to restore objects to an object store from an archive.
@@ -72,8 +110,7 @@ pub trait ArchiveCreator {
     /// to the archive; see [`Self::flush_and_finish`]).
     async fn add_object(
         &self,
-        path: String,
-        size: u64,
+        object: ArchiveObject,
         data: Box<dyn Stream<Item = Result<bytes::Bytes>>>,
     ) -> Result<()>;
 
@@ -178,7 +215,7 @@ pub enum ArchiveEntryComponent {
     ///
     /// "small" here is defined as smaller than the configured multipart threshold specified in
     /// [`crate::Config`].
-    SmallObject { path: PathBuf, data: Bytes },
+    SmallObject { object: ArchiveObject, data: Bytes },
 
     /// The start of an object that is large enough to be processed in multiple parts.
     ///
@@ -188,8 +225,7 @@ pub enum ArchiveEntryComponent {
     /// The threshold for treating a object as multipart is based on the multipart threshold in
     /// [`crate::Config`]
     StartMultipartObject {
-        path: PathBuf,
-        len: u64,
+        object: ArchiveObject,
         parts: Vec<Range<u64>>,
     },
 
