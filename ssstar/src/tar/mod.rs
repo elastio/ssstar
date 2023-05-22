@@ -348,9 +348,7 @@ mod tests {
             // Generate some random data as well.  Entries are zero-padded if their data doesn't
             // end on a 512-byte boundary so we want to generate enough random samples to exercise
             // the padding logic as well
-            //let data_length: usize = rng.gen_range(1..10_000_000);
-            //TODO: put back to 10MB before committing
-            let data_length: usize = rng.gen_range(1..1000);
+            let data_length: usize = rng.gen_range(1..10_000);
             let data: Vec<u8> = rng.sample_iter(&Standard).take(data_length).collect();
 
             Self { path, data }
