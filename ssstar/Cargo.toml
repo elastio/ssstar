@@ -74,7 +74,7 @@ more-asserts   = { workspace = true }
 rand           = { workspace = true }
 ssstar-testing = { version = "0.4.4-dev", path = "../ssstar-testing" }
 strum          = { workspace = true }
-tempdir        = { workspace = true }
+tempfile       = { workspace = true }
 
 [build-dependencies]
 vergen = { workspace = true }

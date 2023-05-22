@@ -15,7 +15,7 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use tempdir::TempDir;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tracing::debug;
 use which::which;
@@ -262,7 +262,7 @@ impl MinioServer {
     fn temp_data_dir() -> Result<TempDir> {
         let home = dirs::home_dir().ok_or_else(|| eyre!("Unable to determine home directory"))?;
 
-        Ok(TempDir::new_in(home, "ssstar-minio-temp")?)
+        Ok(tempfile::tempdir_in(home)?)
     }
 }
 

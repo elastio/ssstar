@@ -50,22 +50,12 @@ notice = "warn"
 ignore = [
   #"RUSTSEC-0000-0000",
 
-  # tempdir works fine and is only used in test code.  No immediate urgency to update to tempfile
-  "RUSTSEC-2018-0017",
-
   # We only use dotenv in tests, not in production, so this advisory doesn't apply
   "RUSTSEC-2021-0142",
-
-  # This is a dependency of the AWS SDK crates, we can't control it
-  "RUSTSEC-2022-0049",
 
   # We should probably update to dotenvy, but we use dotenv only in test code so there's
   # no immediate urgency
   "RUSTSEC-2021-0141",
-
-  # Unfortunately ansi-term isn't a direct dependency, it comes via tracing-subscriber, so
-  # hopefully that team updates to a maintained crate in the futures
-  "RUSTSEC-2021-0139",
 
   # This `time` UB seems to be a gross over-reaction.  Anyway this is a transitive dependency via chrono,
   # we are not able to update directly
@@ -209,8 +199,17 @@ skip = [
   # aws SDK crate aws-smithy-types-convert still uses chrono 0.4 which uses time 0.1
   { name = "time", version = "0.1.*" },
 
-  # AWS SDK's rustls dependency chain still uses an old base64 crate
-  { name = "base64", version = "0.13.*" },
+  # syn 1.x will be with us for a LONG time via several transitive deps
+  { name = "syn", version = "1" },
+
+  # tracing-subscriber is still using the older regex crate.  everything else has adopted the new version
+  { name = "regex-syntax", version = "0.6" },
+
+  # indicatif hasn't updated to the new portable-atomic
+  { name = "portable-atomic", version = "0.3" },
+
+  # tokio still has a transitive dep on this older version
+  { name = "hermit-abi", version = "0.2" },
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive
@@ -223,8 +222,6 @@ skip-tree = [
   { name = "wasi", version = "0.9.*", depth = 20 },
   { name = "wasi", version = "0.10.*", depth = 20 },
 
-  # rand 0.4 used by tempdir
-  { name = "rand", version = "0.4.*", depth = 20 },
   # rand 0.7 used by again
   { name = "rand", version = "0.7.*", depth = 20 },
 
@@ -233,7 +230,11 @@ skip-tree = [
 
   # an older windows-sys pulls in a ton of older duplicate crates.  This is a transitive dep
   # of hyper-rustls brough in by the latest AWS SDK crates
-  { name = "windows-sys", version = "0.36.*", depth = 20 },
+  #
+  # These various versions of windows-related crates get pulled in by various transitive deps of AWS SDK
+  { name = "windows-sys", version = "0.42.*", depth = 20 },
+  { name = "windows-sys", version = "0.45.*", depth = 20 },
+  { name = "windows", version = "0.48.*", depth = 20 },
 ]
 
 # This section is considered when running `cargo deny check sources`.

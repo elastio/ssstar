@@ -369,7 +369,7 @@ mod tests {
             .map(|_| TestTarData::generate_random(&mut rng))
             .collect::<Vec<_>>();
 
-        let temp_dir = tempdir::TempDir::new("builder-test").unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
         let tar_path = temp_dir.path().join("test.tar");
 
         let tar_file = std::fs::File::create(&tar_path).unwrap();
