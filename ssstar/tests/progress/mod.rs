@@ -349,7 +349,7 @@ impl TestCreateProgressCallback {
                 with_match!(
                     event,
                     CreateProgressEvent::TarArchiveObjectWritten { size, .. },
-                    { size as u64 }
+                    { size }
                 )
             })
             .sum();
@@ -847,7 +847,7 @@ impl TestExtractProgressCallback {
                 with_match!(
                     event,
                     ExtractProgressEvent::ExtractObjectSkipped { size, .. },
-                    { size as u64 }
+                    { size }
                 )
             })
             .sum();

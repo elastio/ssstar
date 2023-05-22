@@ -250,7 +250,7 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
         let message =
             format!("Download completed ({total_bytes} in {duration}, {bytes_per_second}/s)");
 
-        self.multi.println(&message).unwrap();
+        self.multi.println(message).unwrap();
         self.raw_bytes_downloaded
             .finish_with_message(format!("Done ({total_bytes}, {bytes_per_second})"));
         self.ordered_bytes_downloaded
@@ -323,7 +323,7 @@ impl ssstar::CreateProgressCallback for CreateProgressReport {
         let duration = indicatif::HumanDuration(duration);
         let message = format!("Archive upload completed ({duration}, {bytes_per_second}/s)");
 
-        self.multi.println(&message).unwrap();
+        self.multi.println(message).unwrap();
         self.archive_bytes_uploaded
             .finish_with_message("Archive upload completed");
     }

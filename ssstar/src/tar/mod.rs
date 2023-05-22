@@ -423,7 +423,7 @@ mod tests {
                 data_range
             );
             tar_file
-                .seek(std::io::SeekFrom::Start(data_range.start as u64))
+                .seek(std::io::SeekFrom::Start(data_range.start))
                 .unwrap();
             tar_file.read_exact(&mut data).unwrap();
             if data != test_data.data {

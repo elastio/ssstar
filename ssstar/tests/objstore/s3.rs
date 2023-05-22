@@ -105,7 +105,6 @@ async fn run_test(test_data: Vec<test_data::TestObject>) -> Result<()> {
         &restore_prefix,
         test_data
             .keys()
-            .into_iter()
             .map(|key| key.to_string())
             .collect::<Vec<_>>(),
     )

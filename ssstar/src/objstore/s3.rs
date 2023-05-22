@@ -1600,7 +1600,7 @@ fn make_smithy_client(
 }
 
 /// Find the longest common prefix shared by two string slices.
-fn longest_common_prefix<'a, 'b>(a: &'a str, b: &'b str) -> Option<&'a str> {
+fn longest_common_prefix<'a>(a: &'a str, b: &str) -> Option<&'a str> {
     if a.is_empty() {
         return None;
     }
