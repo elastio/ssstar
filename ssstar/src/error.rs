@@ -199,4 +199,11 @@ pub enum S3TarError {
         "Error uploading byte range of an file from the tar archive to object storage"
     ))]
     TarFilePartUpload { source: Arc<S3TarError> },
+
+    #[snafu(display("Error assume role for role-arn: {}", role_arn))]
+    AssumeRole {
+        role_arn: String,
+        source:
+            aws_smithy_http::result::SdkError<aws_sdk_sts::operation::assume_role::AssumeRoleError>,
+    },
 }

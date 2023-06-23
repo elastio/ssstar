@@ -1,20 +1,30 @@
 use super::{Bucket, MultipartUploader, ObjectStorage};
-use crate::{create, Config, Result};
-use aws_config::meta::region::RegionProviderChain;
+use crate::{
+    create,
+    role_credentials_provider::{util::load_region_provider, RoleCredentialsProvider},
+    Config, Result,
+};
 use aws_sdk_s3::config::Credentials;
 use aws_smithy_http::{middleware::MapRequest, operation};
 use aws_smithy_http_tower::map_request::MapRequestLayer;
-use aws_types::region::Region;
 use futures::{Stream, StreamExt};
-use http::header::HeaderName;
-use http::HeaderValue;
+use http::{header::HeaderName, HeaderValue};
 use snafu::{prelude::*, IntoError};
-use std::error::Error;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
-use std::{any::Any, ops::Range, sync::Arc};
-use tokio::io::DuplexStream;
-use tokio::sync::{mpsc, oneshot};
+use std::{
+    any::Any,
+    error::Error,
+    fmt::Debug,
+    ops::Range,
+    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+};
+use tokio::{
+    io::DuplexStream,
+    sync::{mpsc, oneshot},
+};
 use tower::ServiceBuilder;
 use tracing::{debug, error, instrument, warn, Instrument};
 use url::Url;
@@ -1448,14 +1458,8 @@ async fn make_s3_client(
 ) -> Result<aws_sdk_s3::Client> {
     let region = region.into();
 
-    let region_provider = if let Some(region) = region {
-        RegionProviderChain::first_try(Region::new(region))
-    } else if let Some(region) = config.aws_region.as_deref() {
-        RegionProviderChain::first_try(Region::new(region.to_string()))
-    } else {
-        // No explicit region; use the environment
-        RegionProviderChain::default_provider().or_else("us-east-1")
-    };
+    let region_provider =
+        load_region_provider(region.clone().or_else(|| config.aws_region.clone()));
 
     let mut aws_config_builder = aws_config::from_env().region(region_provider);
 
@@ -1468,6 +1472,19 @@ async fn make_s3_client(
             aws_secret_access_key,
             config.aws_session_token.clone(),
         ));
+    } else if let (Some(role_arn), Some(role_session_name)) = (
+        config.aws_role_arn.as_deref(),
+        config.aws_role_session_name.as_deref(),
+    ) {
+        aws_config_builder = aws_config_builder.credentials_provider(
+            RoleCredentialsProvider::new(
+                region.or_else(|| config.aws_region.clone()),
+                role_arn,
+                role_session_name,
+                config.aws_role_session_duration_seconds,
+            )
+            .await,
+        );
     }
 
     let aws_config = aws_config_builder.load().await;
