@@ -6,6 +6,7 @@ mod create;
 mod error;
 mod extract;
 mod objstore;
+mod role_credentials_provider;
 #[cfg(feature = "storage")]
 mod storage;
 mod tar;

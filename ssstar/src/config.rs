@@ -49,6 +49,33 @@ pub struct Config {
     )]
     pub aws_session_token: Option<String>,
 
+    /// Uses the provided role-arn, assumes the role and gets the temporary credentials.
+    ///
+    /// Uses the default environment credentials to assume the role.
+    ///
+    /// The credentials are automatically refreshed after the `aws_role_session_duration_seconds`, if
+    /// the `aws_role_session_duration_seconds` is `None` the default duration is 15 minutes
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, global = true, requires = "aws_role_session_name", conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"])
+    )]
+    pub aws_role_arn: Option<String>,
+
+    /// The session name which will be associated with the temporary credentials of the role
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, global = true, conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"])
+    )]
+    pub aws_role_session_name: Option<String>,
+
+    /// Overrides the default session duration which is 15 minutes. After this duration the temporary
+    /// credentials are automatically refreshed
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, global = true, conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"])
+    )]
+    pub aws_role_session_duration_seconds: Option<i32>,
+
     /// Use a custom S3 endpoint instead of AWS.
     ///
     /// Use this to operate on a non-Amazon S3-compatible service.  If this is set, the AWS region
@@ -109,6 +136,9 @@ impl Default for Config {
             aws_access_key_id: None,
             aws_secret_access_key: None,
             aws_session_token: None,
+            aws_role_arn: None,
+            aws_role_session_name: None,
+            aws_role_session_duration_seconds: None,
             s3_endpoint: None,
             multipart_chunk_size: byte_unit::Byte::from_bytes(8 * 1024 * 1024),
             multipart_threshold: byte_unit::Byte::from_bytes(8 * 1024 * 1024),

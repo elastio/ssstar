@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.5.1 - 23-Jun-2023
+
+### Changes
+
+* Add `aws-sdk-sts v0.27.0` as a dependency for `ssstar` crate
+* Add new `role_credentials_provider` module that implements auto refreshing credentials
+
+  This provider assumes the role and gets the temporary credentials and refreshes the credentials when they are close
+  to expiration.
+
 ## 0.5.0 - 22-May-2023
 
 ### Breaking Changes
