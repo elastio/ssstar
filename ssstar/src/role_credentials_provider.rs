@@ -126,8 +126,9 @@ impl ProvideCredentials for RoleCredentialsProvider {
     where
         Self: 'a,
     {
-        // clones the inner context and returns the future that returns the valid credentials which are
-        // refreshed if needed
+        // Clones the inner context and returns the future that returns the valid credentials
+        //
+        // This is called only when the current credentials are expired
         let inner = self.0.clone();
         aws_credential_types::provider::future::ProvideCredentials::new(async move {
             let mut guard = inner.lock().await;
