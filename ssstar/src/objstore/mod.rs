@@ -1,4 +1,4 @@
-use crate::{create, Config, Result};
+use crate::{create, ArchiveObject, Config, Result};
 use dyn_clone::DynClone;
 use std::{any::Any, ops::Range};
 use tokio::io::DuplexStream;
@@ -63,7 +63,10 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     fn name(&self) -> &str;
 
     /// Query the size of the specified object
-    async fn get_object_size(&self, key: String, version_id: Option<String>) -> Result<u64>;
+    //async fn get_object_size(&self, key: String, version_id: Option<String>) -> Result<u64>;
+
+    /// Verify the specified object exists and create a [`Object`] instance describing it.
+    async fn get_object(&self, key: String, version_id: Option<String>) -> Result<Box<dyn Object>>;
 
     /// List all objects in this bucket that match the specified selector
     ///
@@ -72,7 +75,7 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     async fn list_matching_objects(
         &self,
         selector: create::ObjectSelector,
-    ) -> Result<Vec<create::InputObject>>;
+    ) -> Result<Vec<Box<dyn Object>>>;
 
     /// Read a part of an object.
     ///
@@ -130,13 +133,13 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
         size: u64,
     ) -> Result<Option<Vec<Range<u64>>>>;
 
-    /// Start a multipart upload of an object with a known size which has already been partitioned
+    /// Start a multipart upload of a previously archived object with a known size which has already been partitioned
     /// with a previous call to [`Self::partition_for_multipart_upload`].
     ///
     /// The `parts` must have been returned from a prior call to `partition_for_multipart_upload`.
-    fn start_multipart_upload(
+    fn start_multipart_restore_object(
         &self,
-        key: String,
+        object: ArchiveObject,
         parts: Vec<Range<u64>>,
     ) -> Box<dyn MultipartUploader>;
 
@@ -145,10 +148,13 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     ///
     /// This should only be used for objects under the multpart threshold in size.  For anything
     /// bigger, use the more complex [`Self::create_object_writer`].
-    async fn put_small_object(&self, key: String, data: bytes::Bytes) -> Result<()>;
+    async fn restore_small_object(&self, object: ArchiveObject, data: bytes::Bytes) -> Result<()>;
 
     /// Construct an [`DuplexStream`] implementation that will upload all written data to the object
     /// identified as `key`.
+    ///
+    /// This is used to write streaming archives to object storage, as part of the `create` command
+    /// implementation.
     ///
     /// The size of the object to write doesn't have to be known exactly, but the caller should
     /// provide a size hint if it can predict approximately how large the object will be.
@@ -172,7 +178,7 @@ pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
     ///   the writes sent to the [`DuplexStream`].  Callers should await this receiver, which will
     ///   complete only when the data written to the `DuplexStream` have all been uploaded
     ///   successfully, or some error ocurrs that causes the uploading to be aborted.
-    async fn create_object_writer(
+    async fn create_archive_writer(
         &self,
         key: String,
         size_hint: Option<u64>,
@@ -255,3 +261,55 @@ impl ObjectStorageFactory {
         Ok(Box::new(s3::S3::new(config.clone()).await?))
     }
 }
+
+/// An object inside an object storage bucket
+///
+/// It is guaranteed that cloning instances of this object is very cheap and does not incurr
+/// additional allocation.
+#[async_trait::async_trait]
+pub(crate) trait Object: DynClone + std::fmt::Debug + Sync + Send + 'static {
+    /// HACK so that implementations can downcast from `Arc<dyn Object>` to the
+    /// implementation-specific type.  Pretend you didn't see this.
+    #[doc(hidden)]
+    fn as_any(&self) -> &(dyn Any + Sync + Send);
+
+    /// The bucket containing this object
+    fn bucket(&self) -> &dyn Bucket;
+
+    /// The key that uniquely identifies this object.
+    ///
+    /// Can contain prefixes separated by `/` to create the impression of a hierarchical FS-like
+    /// structure, although that's just a convention
+    fn key(&self) -> &str;
+
+    /// If versioning is enabled on the bucket, the version ID of the object.
+    fn version_id(&self) -> Option<&str>;
+
+    /// Size in bytes of the object data
+    fn len(&self) -> u64;
+
+    /// Timestamp when the object was created.
+    fn timestamp(&self) -> chrono::DateTime<chrono::Utc>;
+
+    /// Query the object storage APIs to assemble all of the object's metadata (other than that
+    /// already exposed via other methods on the trait) and serialize all of that metadata into a
+    /// JSON representation.
+    ///
+    /// Consumers of this JSON can't make any assumptions about what kind of metadata is in here,
+    /// only that it can be restored.
+    ///
+    /// The metadata produced here will be passed back to the object storage implementation of
+    /// [`ObjectStorageBucket`] when the object is being restored from an archive.
+    ///
+    /// When restoring metadata for an object, the object storage impl must be able to work
+    /// correctly with metadata obtained from an earlier version of its impl, or from impls from
+    /// other object stores.  In such cases, as much of the metadata as possible should be
+    /// restored.
+    ///
+    /// For example if an S3 object is backed up, and restored to Google GCP object storage, the
+    /// tags should be preserved, even though things like storage class are AWS-specific can cannot
+    /// be restored go GCP.
+    async fn load_metadata(&self) -> Result<serde_json::Value>;
+}
+
+dyn_clone::clone_trait_object!(Object);

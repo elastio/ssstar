@@ -443,7 +443,7 @@ impl S3Bucket {
 
         debug!(total_bytes, "Uploading unipart object");
 
-        self.put_small_object(key, bytes).await?;
+        self.restore_small_object(key, bytes).await?;
 
         let _ = progress_sender.send(total_bytes as usize);
 
@@ -1056,7 +1056,7 @@ impl Bucket for S3Bucket {
     }
 
     #[instrument(skip(self))]
-    fn start_multipart_upload(
+    fn start_multipart_restore_object(
         &self,
         key: String,
         parts: Vec<Range<u64>>,
@@ -1065,7 +1065,7 @@ impl Bucket for S3Bucket {
     }
 
     #[instrument(skip(self, data), fields(len = data.len()))]
-    async fn put_small_object(&self, key: String, data: bytes::Bytes) -> Result<()> {
+    async fn restore_small_object(&self, key: String, data: bytes::Bytes) -> Result<()> {
         let key = Self::url_path_to_s3_path(&key).to_string();
 
         self.inner
@@ -1086,7 +1086,7 @@ impl Bucket for S3Bucket {
     }
 
     #[instrument(skip(self))]
-    async fn create_object_writer(
+    async fn create_archive_writer(
         &self,
         key: String,
         size_hint: Option<u64>,

@@ -6,7 +6,6 @@ mod create;
 mod error;
 mod extract;
 mod objstore;
-#[cfg(feature = "storage")]
 mod storage;
 mod tar;
 mod writers;
@@ -15,5 +14,4 @@ pub use config::Config;
 pub use create::*;
 pub use error::{Result, S3TarError};
 pub use extract::*;
-#[cfg(feature = "storage")]
 pub use storage::*;

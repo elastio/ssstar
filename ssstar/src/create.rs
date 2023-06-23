@@ -647,7 +647,7 @@ impl CreateArchiveJob {
 
                 // Create a writer that will upload all written data to this object
                 let (bytes_writer, mut progress_receiver, result_receiver) = bucket
-                    .create_object_writer(key, Some(approx_archive_size))
+                    .create_archive_writer(key, Some(approx_archive_size))
                     .await?;
 
                 // Make a background task that will pull updates from the process stream and post

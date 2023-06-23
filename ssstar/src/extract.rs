@@ -820,7 +820,7 @@ impl ExtractArchiveJob {
 
                             progress.object_upload_starting(&key, len as u64);
 
-                            target_bucket.put_small_object(key.clone(), data).await?;
+                            target_bucket.restore_small_object(key.clone(), data).await?;
 
                             progress.object_part_uploaded(&key, len);
                             progress.object_uploaded(&key, len as u64);
@@ -841,7 +841,7 @@ impl ExtractArchiveJob {
                         // A file large enough that it should be a multi-part upload is being read.
                         let key = format!("{}{}", target_prefix, path.display());
 
-                        let uploader = target_bucket.start_multipart_upload(key.clone(),
+                        let uploader = target_bucket.start_multipart_restore_object(key.clone(),
                             parts);
 
                         state.current_key = Some(key.clone());

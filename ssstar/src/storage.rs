@@ -5,13 +5,107 @@
 //! library crate is designed to also be used as part of the Elastio data protection solution.
 //! There we need something more exotic than a simple tar archive, because we need to be able to
 //! perform incremental ingest of S3 buckets, skipping reading objects that haven't changed.
-use crate::objstore::Bucket;
+use crate::objstore::{Bucket, Object};
 use crate::{CreateProgressCallback, ExtractFilter, ExtractProgressCallback, Result};
 use bytes::Bytes;
 use dyn_clone::DynClone;
 use futures::Stream;
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::sync::Arc;
+
+/// An object on object storage that is an input to an archive.
+///
+/// There is a related (non-public) trait `Object` in the `objstore` module which is implemented by
+/// each object storage technology to abstract away the specific APIs it uses.  This struct wraps
+/// that internal-only trait to make parts of it available to the storage API
+#[derive(Clone, Debug)]
+pub struct InputObject {
+    inner: Box<dyn Object>,
+    metadata: once_cell::sync::OnceCell<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl InputObject {
+    pub(crate) fn new(inner: Box<dyn Object>) -> Self {
+        Self {
+            inner,
+            metadata: Default::default(),
+        }
+    }
+
+    /// The key that uniquely identifies this object.
+    ///
+    /// Can contain prefixes separated by `/` to create the impression of a hierarchical FS-like
+    /// structure, although that's just a convention
+    pub fn key(&self) -> &str {
+        self.inner.key()
+    }
+
+    /// If versioning is enabled on the bucket, the version ID of the object.
+    pub fn version_id(&self) -> Option<&str> {
+        self.inner.version_id()
+    }
+
+    /// Size in bytes of the object data
+    pub fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    /// Timestamp when the object was created.
+    pub fn timestamp(&self) -> chrono::DateTime<chrono::Utc> {
+        self.inner.timestamp()
+    }
+
+    /// Query the object storage APIs to assemble all of the object's metadata (other than that
+    /// already exposed via other methods on the trait) and serialize all of that metadata into a
+    /// JSON representation.
+    ///
+    /// Consumers of this JSON can't make any assumptions about what kind of metadata is in here,
+    /// only that it can be restored.
+    ///
+    /// The metadata produced here will be passed back to the object storage implementation of
+    /// [`ObjectStorageBucket`] when the object is being restored from an archive.
+    ///
+    /// When restoring metadata for an object, the object storage impl must be able to work
+    /// correctly with metadata obtained from an earlier version of its impl, or from impls from
+    /// other object stores.  In such cases, as much of the metadata as possible should be
+    /// restored.
+    ///
+    /// For example if an S3 object is backed up, and restored to Google GCP object storage, the
+    /// tags should be preserved, even though things like storage class are AWS-specific can cannot
+    /// be restored go GCP.
+    pub async fn load_metadata(&self) -> Result<serde_json::Map<String, serde_json::Value>> {
+        // Only retrieve the metadata from the underlying object store once.  If it was already
+        // successfully retrieved, no need to retrieve it again.
+
+        match self.metadata.get() {
+            Some(metadata) => Ok(metadata.clone()),
+            None => {
+                let metadata = self.inner.load_metadata().await?;
+                let _ = self.metadata.set(metadata.clone());
+                Ok(metadata)
+            }
+        }
+    }
+
+    /// Consume this object and from it construct a [`ArchiveObject`] that is suitable for
+    /// serializing into persistent storage as part of an archive operation.
+    ///
+    /// This will automatically call [`Self::load_metadata`], if it hasn't already been called, and
+    /// include the custom metadata in the [`ArchiveObjectMetadata`]
+    pub async fn into_archive_object(self) -> Result<ArchiveObject> {
+        Ok(ArchiveObject {
+            obj_store_type: self.inner.bucket().objstore().typ(),
+            key: self.inner.key().to_owned(),
+            version_id: self.inner.version_id().map(|id| id.to_owned()),
+            metadata: ArchiveObjectMetadata {
+                size: self.inner.len(),
+                timestamp: self.inner.timestamp(),
+                extra: self.load_metadata().await?,
+            },
+        })
+    }
+}
 
 /// Descriptor for an object in object storage that we want to be able to store in an archive and
 /// re-constitute into object storage from that archive later.
@@ -27,20 +121,23 @@ use std::sync::Arc;
 ///
 /// Each object storage implementation (see [`crate::objstore`]) will be responsible for
 /// translating this generic representation of object metadata into its specific representation.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ArchiveObject {
-    pub obj_store_type: &'static str,
-    pub key: String,
-    pub version_id: Option<String>,
-    pub metadata: ArchiveObjectMetadata,
+    /// A string that represents the object store type that this object was obtained from.
+    ///
+    /// This is set to the value returned by [`crate::objstore::ObjectStorage::typ`] for the
+    /// [`ObjectStorage`] impl that obtained this object
+    obj_store_type: &'static str,
+    key: String,
+    version_id: Option<String>,
+    metadata: ArchiveObjectMetadata,
 }
 
 /// Metadata about an [`ArchiveObject`] minus the key and version ID which is common to all objects
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ArchiveObjectMetadata {
     pub size: u64,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub tags: Vec<(String, Option<String>)>,
 
     /// Additional metadata that is specific to the object storage implementation.
     ///
@@ -87,16 +184,20 @@ pub trait ArchiveFormat {
 /// are possible.
 #[async_trait::async_trait]
 pub trait ArchiveCreator {
-    /// Given the total number of objects and total number of bytes that will be written to the archive,
-    /// estimate the size of the archive.
+    /// Prepare the creator to accept objects to be written to the archive, optionally filtering
+    /// out objects that do not need to be added because they are already present from a prior
+    /// archive.
     ///
-    /// This doesn't have to be precise, but if it is approximate it should err on the side of
-    /// larger than the actual size as opposed to smaller.  The estimated size will be used to
-    /// determine what the multipart size should be when uploading, so if the estimate is smaller
-    /// than the actual size it's possible the multipart size will be chosen that's too small to
-    /// represent the entire archive, since S3 has a limited of 10K parts in each multi-part
-    /// upload.
-    fn estimate_archive_size(&self, total_objects: u64, total_bytes: u64) -> u64;
+    /// This is called once after the creator is first created, before any objects are added.  The
+    /// list of all objects that are to be written to the archive is passed in the the caller.  The
+    /// storage implementation can optionally remove those objects that it knows it has already
+    /// archived previously, if it has a way to nonetheless include those objects in this archive
+    /// by reference.
+    ///
+    /// Only those objects returned by this function will be passed to [`Self::add_object`], but
+    /// *all* objects in the `objects` list are expected to be in this archive when it is
+    /// completed.
+    async fn prepare_archive(&self, objects: Vec<InputObject>) -> Result<Vec<InputObject>>;
 
     /// Add an object to the archive.
     ///
