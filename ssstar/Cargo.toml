@@ -44,6 +44,7 @@ aws-smithy-http          = { workspace = true }
 aws-smithy-http-tower    = { workspace = true }
 aws-smithy-types         = { workspace = true }
 aws-smithy-types-convert = { workspace = true }
+aws-sdk-sts              = { workspace = true }
 aws-types                = { workspace = true }
 byte-unit                = { workspace = true }
 bytes                    = { workspace = true }
