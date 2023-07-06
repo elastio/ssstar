@@ -206,4 +206,18 @@ pub enum S3TarError {
         source:
             aws_smithy_http::result::SdkError<aws_sdk_sts::operation::assume_role::AssumeRoleError>,
     },
+
+    #[snafu(display("Get parameter error of the parameter: {}", parameter_name))]
+    SsmGetParameter {
+        source: aws_smithy_http::result::SdkError<
+            aws_sdk_ssm::operation::get_parameter::GetParameterError,
+        >,
+        parameter_name: String,
+    },
+
+    #[snafu(display("SSM parameter '{}' is empty", parameter_name))]
+    SsmParameterEmpty { parameter_name: String },
+
+    #[snafu(display("SSM parameter '{}' does not exist", parameter_name))]
+    SsmParameterMissing { parameter_name: String },
 }

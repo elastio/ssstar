@@ -1482,6 +1482,9 @@ async fn make_s3_client(
                 role_arn,
                 role_session_name,
                 config.aws_role_session_duration_seconds,
+                config.aws_bastion_role_arn.clone(),
+                config.aws_bastion_session_name.clone(),
+                config.aws_bastion_external_id_name.clone(),
             )
             .await,
         );

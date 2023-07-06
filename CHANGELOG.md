@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.5.2 - 07-Jul-2023
+
+### Changes
+
+* Add `aws-sdk-ssm v0.27.0` as a dependency for `ssstar` crate
+* Add additional options to support bastion-based assume role with auto refreshing credentials
+
 ## 0.5.1 - 23-Jun-2023
 
 ### Changes

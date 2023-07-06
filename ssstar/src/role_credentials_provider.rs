@@ -14,8 +14,22 @@ use std::{
 };
 use tokio::sync::Mutex;
 
+/// The configuration to assume bastion-based role
+#[derive(Debug)]
+struct BastionConfig {
+    /// Role-arn of bastion role
+    role_arn: String,
+    /// The name of the SSM external-ID parameter
+    external_id_name: String,
+    /// Session name for assuming the bastion-based role
+    session_name: String,
+}
+
 /// The configuration which is used to re-fresh credentials for the specified role-arn
+#[derive(Debug)]
 struct RefreshConfig {
+    /// Bastion-based configuration to assume role
+    bastion: Option<BastionConfig>,
     /// Region which is used on `AssumeRole` operation
     region: Option<String>,
     /// Role-arn of the role which we expect to use to get temporary credentials
@@ -34,7 +48,7 @@ struct AutoRefreshingProviderInner {
 }
 
 impl AutoRefreshingProviderInner {
-    async fn refresh_credentials(&mut self) -> Result<()> {
+    async fn refresh_credentials_impl(&mut self) -> Result<()> {
         let region_provider = util::load_region_provider(self.refresh_config.region.as_ref());
         let aws_cfg = aws_config::from_env().region(region_provider).load().await;
         let sts_client = aws_sdk_sts::Client::new(&aws_cfg);
@@ -51,7 +65,7 @@ impl AutoRefreshingProviderInner {
             })?;
         let new_credentials = assume_role_output
             .credentials()
-            .expect("BUG: No credentials after assume role");
+            .expect("BUG: assume role credentials are not available");
         let (access, secret, session) = (
             new_credentials
                 .access_key_id()
@@ -62,6 +76,116 @@ impl AutoRefreshingProviderInner {
                 .map(String::from)
                 .expect("BUG: no secret access key"),
             new_credentials
+                .session_token()
+                .map(String::from)
+                .expect("BUG: no session token"),
+        );
+        let new_creds = Credentials::from_keys(access, secret, Some(session));
+        self.credentials = Some(new_creds);
+        Ok(())
+    }
+
+    async fn refresh_credentials(&mut self) -> Result<()> {
+        if self.refresh_config.bastion.is_some() {
+            self.refresh_credentials_with_bastion().await
+        } else {
+            self.refresh_credentials_impl().await
+        }
+    }
+
+    async fn refresh_credentials_with_bastion(&mut self) -> Result<()> {
+        let region_provider = util::load_region_provider(self.refresh_config.region.as_ref());
+        let aws_cfg = aws_config::from_env().region(region_provider).load().await;
+        let sts_client = aws_sdk_sts::Client::new(&aws_cfg);
+        let bastion = self
+            .refresh_config
+            .bastion
+            .as_ref()
+            .expect("BUG: no bastion config on credentials refresh");
+
+        let bastion_role_creds = sts_client
+            .assume_role()
+            .role_arn(&bastion.role_arn)
+            .role_session_name(&bastion.session_name)
+            .send()
+            .await
+            .map_err(|source| crate::error::S3TarError::AssumeRole {
+                role_arn: bastion.role_arn.clone(),
+                source,
+            })?
+            .credentials()
+            .expect("BUG: bastion assume role credentials are not available")
+            .clone();
+
+        let ssm_client = aws_sdk_ssm::Client::new(&aws_cfg);
+        let param = ssm_client
+            .get_parameter()
+            .name(&bastion.external_id_name)
+            .with_decryption(true)
+            .send()
+            .await
+            .map_err(|source| crate::error::S3TarError::SsmGetParameter {
+                source,
+                parameter_name: bastion.external_id_name.clone(),
+            })?
+            .parameter()
+            .cloned();
+
+        let external_id = match param {
+            Some(p) => match p.value {
+                Some(id) => id,
+                None => {
+                    return Err(crate::error::S3TarError::SsmParameterEmpty {
+                        parameter_name: bastion.external_id_name.clone(),
+                    })
+                }
+            },
+            None => {
+                return Err(crate::error::S3TarError::SsmParameterMissing {
+                    parameter_name: bastion.external_id_name.clone(),
+                })
+            }
+        };
+
+        let bastion_aws_cfg = aws_config::from_env()
+            .region(util::load_region_provider(
+                self.refresh_config.region.as_ref(),
+            ))
+            .credentials_provider(Credentials::from_keys(
+                bastion_role_creds.access_key_id().unwrap().to_string(),
+                bastion_role_creds.secret_access_key().unwrap().to_string(),
+                bastion_role_creds.session_token().map(String::from),
+            ))
+            .load()
+            .await;
+
+        let bastion_sts_client = aws_sdk_sts::Client::new(&bastion_aws_cfg);
+
+        let asset_account_creds = bastion_sts_client
+            .assume_role()
+            .role_arn(&self.refresh_config.role_arn)
+            .role_session_name(&self.refresh_config.role_session_name)
+            .set_external_id(Some(external_id))
+            .send()
+            .await
+            .map_err(|source| crate::error::S3TarError::AssumeRole {
+                role_arn: self.refresh_config.role_arn.clone(),
+                source,
+            })?
+            .credentials()
+            .expect("BUG: assume role credentials are not available")
+            .clone();
+
+        let (access, secret, session) = (
+            asset_account_creds
+                .access_key_id()
+                .map(String::from)
+                .expect("BUG: no access key id"),
+            asset_account_creds
+                .secret_access_key()
+                .map(String::from)
+                .expect("BUG: no secret access key"),
+            asset_account_creds
                 .session_token()
                 .map(String::from)
                 .expect("BUG: no session token"),
@@ -97,8 +221,25 @@ impl RoleCredentialsProvider {
         role_arn: impl Into<String>,
         role_session_name: impl Into<String>,
         aws_role_session_duration_seconds: Option<i32>,
+        aws_bastion_role_arn: Option<impl Into<String>>,
+        aws_bastion_session_name: Option<impl Into<String>>,
+        aws_bastion_external_id_name: Option<impl Into<String>>,
     ) -> RoleCredentialsProvider {
+        let bastion = match (
+            aws_bastion_role_arn,
+            aws_bastion_session_name,
+            aws_bastion_external_id_name,
+        ) {
+            (Some(role), Some(session), Some(external_id_name)) => Some(BastionConfig {
+                role_arn: role.into(),
+                external_id_name: external_id_name.into(),
+                session_name: session.into(),
+            }),
+            _ => None,
+        };
+
         let refresh_config = RefreshConfig {
+            bastion,
             region,
             role_arn: role_arn.into(),
             role_session_name: role_session_name.into(),
