@@ -1,9 +1,10 @@
+use crate::custom_credentials_provider::CustomCredentialsProvider;
 use url::Url;
 
 /// The configuration settings that control the behavior of archive creation and extraction.
 ///
 ///
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 pub struct Config {
@@ -75,40 +76,11 @@ pub struct Config {
         feature = "clap",
         clap(long, global = true, conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"])
     )]
-    pub aws_role_session_duration_seconds: Option<i32>,
+    pub aws_role_session_duration_seconds: Option<u64>,
 
-    /// Bastion role ARN which will be used to assume the role specified with `--aws-role-arn`
-    #[cfg_attr(
-        feature = "clap",
-        clap(long, global = true,
-            conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"],
-            requires_all = &["aws_role_arn", "aws_bastion_session_name", "aws_bastion_external_id_name"]
-        )
-    )]
-    pub aws_bastion_role_arn: Option<String>,
-
-    /// The session name which will be associated with the temporary credentials of the role which is
-    /// specified with `--aws-bastion-role-arn`, this session is only for assuming the role which is
-    /// specified with `--aws-role-arn`
-    #[cfg_attr(
-        feature = "clap",
-        clap(long, global = true,
-            conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"],
-            requires = "aws_bastion_role_arn"
-        )
-    )]
-    pub aws_bastion_session_name: Option<String>,
-
-    /// The external ID name which will be used to get external ID which is used to assume the role
-    /// which is specified with `--aws-role-arn`
-    #[cfg_attr(
-        feature = "clap",
-        clap(long, global = true,
-            conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"],
-            requires = "aws_bastion_role_arn"
-        )
-    )]
-    pub aws_bastion_external_id_name: Option<String>,
+    /// Custom credentials provider, this is useful if you prefer providing credentials on yourself
+    /// which may expire from time to time.
+    pub credentials_provider: Option<CustomCredentialsProvider>,
 
     /// Use a custom S3 endpoint instead of AWS.
     ///
@@ -173,9 +145,7 @@ impl Default for Config {
             aws_role_arn: None,
             aws_role_session_name: None,
             aws_role_session_duration_seconds: None,
-            aws_bastion_role_arn: None,
-            aws_bastion_session_name: None,
-            aws_bastion_external_id_name: None,
+            credentials_provider: None,
             s3_endpoint: None,
             multipart_chunk_size: byte_unit::Byte::from_bytes(8 * 1024 * 1024),
             multipart_threshold: byte_unit::Byte::from_bytes(8 * 1024 * 1024),

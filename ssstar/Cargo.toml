@@ -45,7 +45,6 @@ aws-smithy-http-tower    = { workspace = true }
 aws-smithy-types         = { workspace = true }
 aws-smithy-types-convert = { workspace = true }
 aws-sdk-sts              = { workspace = true }
-aws-sdk-ssm              = { workspace = true }
 aws-types                = { workspace = true }
 byte-unit                = { workspace = true }
 bytes                    = { workspace = true }
@@ -74,7 +73,7 @@ dotenv         = { workspace = true }
 dotenv_codegen = { workspace = true }
 more-asserts   = { workspace = true }
 rand           = { workspace = true }
-ssstar-testing = { version = "0.5.1", path = "../ssstar-testing" }
+ssstar-testing = { version = "0.5.0", path = "../ssstar-testing" }
 strum          = { workspace = true }
 tempfile       = { workspace = true }
 
