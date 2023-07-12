@@ -80,6 +80,10 @@ pub struct Config {
 
     /// Custom credentials provider, this is useful if you prefer providing credentials on yourself
     /// which may expire from time to time.
+    #[cfg_attr(
+        feature = "clap",
+        clap(skip)
+    )]
     pub credentials_provider: Option<CustomCredentialsProvider>,
 
     /// Use a custom S3 endpoint instead of AWS.
