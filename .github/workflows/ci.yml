@@ -27,7 +27,7 @@ jobs:
     - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: nightly
+        toolchain: nightly-2023-06-15
         profile: minimal
         override: true
     - uses: Swatinem/rust-cache@v2
@@ -47,7 +47,7 @@ jobs:
     - name: Check for unused dependencies
       shell: bash
       run: |
-        cargo +nightly udeps
+        cargo +nightly-2023-06-15 udeps
 
   rustfmt:
     runs-on: ubuntu-latest

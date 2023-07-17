@@ -3,7 +3,7 @@
 mod async_bridge;
 mod config;
 mod create;
-mod custom_credentials_provider;
+mod credentials_provider;
 mod error;
 mod extract;
 mod objstore;
@@ -14,8 +14,8 @@ mod writers;
 
 pub use config::Config;
 pub use create::*;
-pub use custom_credentials_provider::{
-    CustomCredentialsProvider, CustomCredentialsUpdateCallback, CustomCredentialsUpdateOutput,
+pub use credentials_provider::{
+    CredentialsProvider, CredentialsUpdateCallback, CredentialsUpdateOutput,
 };
 pub use error::{Result, S3TarError};
 pub use extract::*;

@@ -1,4 +1,4 @@
-use crate::custom_credentials_provider::CustomCredentialsProvider;
+use crate::credentials_provider::CredentialsProvider;
 use url::Url;
 
 /// The configuration settings that control the behavior of archive creation and extraction.
@@ -80,11 +80,8 @@ pub struct Config {
 
     /// Custom credentials provider, this is useful if you prefer providing credentials on yourself
     /// which may expire from time to time.
-    #[cfg_attr(
-        feature = "clap",
-        clap(skip)
-    )]
-    pub credentials_provider: Option<CustomCredentialsProvider>,
+    #[cfg_attr(feature = "clap", clap(skip))]
+    pub credentials_provider: Option<CredentialsProvider>,
 
     /// Use a custom S3 endpoint instead of AWS.
     ///

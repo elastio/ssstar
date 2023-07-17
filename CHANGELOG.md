@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changes
 
-* Add `CustomCredentialsProvider` trait to support custom way to provide credentials
+* Add `CredentialsProvider` trait to support custom way to provide credentials
 
   The code that uses this crate as a lib can implement this trait and pass it into config
 

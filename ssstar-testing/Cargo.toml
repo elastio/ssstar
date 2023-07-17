@@ -42,15 +42,12 @@ once_cell            = { workspace = true }
 rand                 = { workspace = true }
 regex                = { workspace = true }
 sha2                 = { workspace = true }
-strum                = { workspace = true }
 tar                  = { workspace = true }
 tempfile             = { workspace = true }
 tokio                = { workspace = true }
 tokio-util           = { workspace = true }
 tracing              = { workspace = true }
-tracing-appender     = { workspace = true }
 tracing-subscriber   = { workspace = true }
-tracing-test         = { workspace = true }
 typenum              = { workspace = true }
 url                  = { workspace = true }
 walkdir              = { workspace = true }
