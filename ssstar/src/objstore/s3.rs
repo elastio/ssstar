@@ -1,12 +1,13 @@
 use super::{Bucket, MultipartUploader, ObjectStorage};
-use crate::{
-    create,
-    role_credentials_provider::{util::load_region_provider, RoleCredentialsProvider},
-    Config, Result,
+use crate::{create, Config, Result};
+use aws_config::{
+    default_provider::credentials::DefaultCredentialsChain, meta::region::RegionProviderChain,
+    sts::AssumeRoleProvider,
 };
 use aws_sdk_s3::config::Credentials;
 use aws_smithy_http::{middleware::MapRequest, operation};
 use aws_smithy_http_tower::map_request::MapRequestLayer;
+use aws_types::region::Region;
 use futures::{Stream, StreamExt};
 use http::{header::HeaderName, HeaderValue};
 use snafu::{prelude::*, IntoError};
@@ -1463,7 +1464,9 @@ async fn make_s3_client(
 
     let mut aws_config_builder = aws_config::from_env().region(region_provider);
 
-    if let (Some(aws_access_key_id), Some(aws_secret_access_key)) = (
+    if let Some(provider) = &config.credentials_provider {
+        aws_config_builder = aws_config_builder.credentials_provider(provider.clone());
+    } else if let (Some(aws_access_key_id), Some(aws_secret_access_key)) = (
         config.aws_access_key_id.as_deref(),
         config.aws_secret_access_key.as_deref(),
     ) {
@@ -1476,15 +1479,24 @@ async fn make_s3_client(
         config.aws_role_arn.as_deref(),
         config.aws_role_session_name.as_deref(),
     ) {
-        aws_config_builder = aws_config_builder.credentials_provider(
-            RoleCredentialsProvider::new(
-                region.or_else(|| config.aws_region.clone()),
-                role_arn,
-                role_session_name,
-                config.aws_role_session_duration_seconds,
-            )
-            .await,
+        let mut builder = AssumeRoleProvider::builder(role_arn).session_name(role_session_name);
+        if let Some(region) = region.clone().or_else(|| config.aws_region.clone()) {
+            builder = builder.region(Region::new(region))
+        }
+        if let Some(seconds) = config.aws_role_session_duration_seconds {
+            builder = builder.session_length(std::time::Duration::from_secs(seconds));
+        }
+
+        let assume_role_provider = builder.build(
+            DefaultCredentialsChain::builder()
+                .region(load_region_provider(
+                    region.clone().or_else(|| config.aws_region.clone()),
+                ))
+                .build()
+                .await,
         );
+
+        aws_config_builder = aws_config_builder.credentials_provider(assume_role_provider);
     }
 
     let aws_config = aws_config_builder.load().await;
@@ -1825,5 +1837,17 @@ mod tests {
 
             Ok(())
         })
+    }
+}
+
+/// creates the `RegionProviderChain`, at first try using passed `region` but if this is `None`
+/// then it looks for the region configuration from environment, if no environment configuration
+/// then use `us-east-1` region (which is default region on AWS)
+pub fn load_region_provider(region: Option<impl AsRef<str>>) -> RegionProviderChain {
+    if let Some(region) = region {
+        RegionProviderChain::first_try(Region::new(region.as_ref().to_string()))
+    } else {
+        // No explicit region; use the environment
+        RegionProviderChain::default_provider().or_else("us-east-1")
     }
 }

@@ -1,9 +1,10 @@
+use crate::credentials_provider::CredentialsProvider;
 use url::Url;
 
 /// The configuration settings that control the behavior of archive creation and extraction.
 ///
 ///
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 pub struct Config {
@@ -61,7 +62,8 @@ pub struct Config {
     )]
     pub aws_role_arn: Option<String>,
 
-    /// The session name which will be associated with the temporary credentials of the role
+    /// The session name which will be associated with the temporary credentials of the role which is
+    /// specified with `--aws-role-arn`
     #[cfg_attr(
         feature = "clap",
         clap(long, global = true, conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"])
@@ -74,7 +76,12 @@ pub struct Config {
         feature = "clap",
         clap(long, global = true, conflicts_with_all = &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"])
     )]
-    pub aws_role_session_duration_seconds: Option<i32>,
+    pub aws_role_session_duration_seconds: Option<u64>,
+
+    /// Custom credentials provider, this is useful if you prefer providing credentials on yourself
+    /// which may expire from time to time.
+    #[cfg_attr(feature = "clap", clap(skip))]
+    pub credentials_provider: Option<CredentialsProvider>,
 
     /// Use a custom S3 endpoint instead of AWS.
     ///
@@ -139,6 +146,7 @@ impl Default for Config {
             aws_role_arn: None,
             aws_role_session_name: None,
             aws_role_session_duration_seconds: None,
+            credentials_provider: None,
             s3_endpoint: None,
             multipart_chunk_size: byte_unit::Byte::from_bytes(8 * 1024 * 1024),
             multipart_threshold: byte_unit::Byte::from_bytes(8 * 1024 * 1024),

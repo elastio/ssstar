@@ -27,7 +27,20 @@ jobs:
     - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: nightly
+        # The latest version of nightly leads to failre on CI check:
+        # error[E0635]: unknown feature `proc_macro_span_shrink`
+        #   --> /home/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/proc-macro2-1.0.58/src/lib.rs:92:30
+        #    |
+        # 92 |     feature(proc_macro_span, proc_macro_span_shrink)
+        #    |                              ^^^^^^^^^^^^^^^^^^^^^^
+        #
+        # to prevent this we pinned the specific version of nightly with doesn't have this bug, you can unpin the version
+        # if you check that this works
+        #
+        # More details see here: https://github.com/dtolnay/proc-macro2/issues/356#issuecomment-1614449061
+        # and here https://github.com/dtolnay/proc-macro2/issues/356#issuecomment-1614467505
+        #
+        toolchain: nightly-2023-06-15
         profile: minimal
         override: true
     - uses: Swatinem/rust-cache@v2
@@ -47,7 +60,7 @@ jobs:
     - name: Check for unused dependencies
       shell: bash
       run: |
-        cargo +nightly udeps
+        cargo +nightly-2023-06-15 udeps
 
   rustfmt:
     runs-on: ubuntu-latest

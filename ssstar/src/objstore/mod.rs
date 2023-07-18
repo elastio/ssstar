@@ -252,6 +252,6 @@ impl ObjectStorageFactory {
         //
         // The bug in question is https://github.com/hyperium/hyper/issues/2892, and it seems not
         // likely to be fixed any time soon.
-        Ok(Box::new(s3::S3::new(config.clone()).await?))
+        Ok(Box::new(s3::S3::new(config).await?))
     }
 }

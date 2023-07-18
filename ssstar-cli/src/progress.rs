@@ -505,7 +505,7 @@ impl ssstar::ExtractProgressCallback for ExtractProgressReport {
 
     fn object_part_uploaded(&self, key: &str, bytes: usize) {
         let mut guard = self.object_upload_progress.lock().unwrap();
-        let mut progress = guard
+        let progress = guard
             .get_mut(key)
             .unwrap_or_else(|| panic!("BUG: Object key '{key}' part uploaded event received before upload starting or after object uploaded"));
         progress.total_bytes_uploaded += bytes as u64;
