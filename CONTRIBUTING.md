@@ -103,7 +103,7 @@ the `release.toml`  file.  To perform a release, check out `master` and do the f
 - `cargo release` will make two commits in your local repo, one making a new release tagged with `vX.Y.Z` where X, Y,
   and Z are the semver components of the new release, and it will also update `master` with a new `-dev` version that is
   one patch level higher than the released version.
-- To actually perform the release, do a `git push --tags` to push all of the changes made by `cargo-release`
+- To actually perform the release, do a `git push && git push --tags` to push all of the changes made by `cargo-release`
 - Monitor the progress of the release activites in Github Actions.  Sometimes these fail and then it's a huge PITA since
   you in effect need to undo the release (if the failure happened before the publish to crates.io), or yank the
   crates.io release and make a new patch release which hopefully fixes the problem.
