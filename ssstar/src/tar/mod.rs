@@ -130,7 +130,7 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
         }
 
         let current_byte_offset = self.current_byte_offset.clone();
-        let append_fut = self.with_builder_mut(move |builder| {
+        self.with_builder_mut(move |builder| {
             let mut reader = CountingReader {
                 inner: data,
                 bytes_read: 0,
@@ -164,9 +164,7 @@ impl<W: std::io::Write + Send + 'static> TarBuilderWrapper<W> {
             *guard += header_len + data_len + zero_pad;
 
             Ok(data_range)
-        });
-
-        async move { append_fut.await }
+        })
     }
 
     /// Run a closure in a sync context, providing a mut ref to `tar::Builder`.

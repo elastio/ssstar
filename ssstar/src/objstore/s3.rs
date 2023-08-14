@@ -5,16 +5,13 @@ use aws_config::{
     sts::AssumeRoleProvider,
 };
 use aws_sdk_s3::config::Credentials;
-use aws_smithy_http::{middleware::MapRequest, operation};
-use aws_smithy_http_tower::map_request::MapRequestLayer;
+use aws_smithy_http::event_stream::BoxError;
 use aws_types::region::Region;
 use futures::{Stream, StreamExt};
 use http::{header::HeaderName, HeaderValue};
 use snafu::{prelude::*, IntoError};
 use std::{
     any::Any,
-    error::Error,
-    fmt::Debug,
     ops::Range,
     sync::Arc,
     sync::{
@@ -26,7 +23,6 @@ use tokio::{
     io::DuplexStream,
     sync::{mpsc, oneshot},
 };
-use tower::ServiceBuilder;
 use tracing::{debug, error, instrument, warn, Instrument};
 use url::Url;
 
@@ -572,7 +568,7 @@ impl S3Bucket {
     ) -> Result<Option<String>> {
         if let Err(e) = client.head_bucket().bucket(name).send().await {
             if let aws_sdk_s3::error::SdkError::ServiceError(err) = &e {
-                let response = err.raw().http();
+                let response = err.raw();
                 if response.status() == http::StatusCode::MOVED_PERMANENTLY {
                     if let Some(value) = response.headers().get("x-amz-bucket-region") {
                         if let Ok(region) = value.to_str() {
@@ -1451,6 +1447,40 @@ impl MultipartUploader for S3MultipartUploader {
     }
 }
 
+use aws_sdk_s3::config::ConfigBag;
+use aws_sdk_s3::config::Interceptor;
+use aws_smithy_runtime_api::client::interceptors::context::BeforeTransmitInterceptorContextMut;
+use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
+
+#[derive(Debug)]
+pub struct UserAgentInterceptor {
+    user_agent: Option<HeaderValue>,
+}
+
+impl Interceptor for UserAgentInterceptor {
+    fn modify_before_signing(
+        &self,
+        context: &mut BeforeTransmitInterceptorContextMut,
+        _runtime_components: &RuntimeComponents,
+        _cfg: &mut ConfigBag,
+    ) -> Result<(), BoxError> {
+        let request = context.request_mut();
+
+        if let Some(ua) = self.user_agent.clone() {
+            const HEADER_NAME: &str = "user-agent";
+            request
+                .headers_mut()
+                .insert(HeaderName::from_static(HEADER_NAME), ua);
+        }
+
+        Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "UserAgentInterceptor"
+    }
+}
+
 /// Create a new AWS SDK S3 client, using either an explicit region or the default configuration
 /// deduced from the environment
 async fn make_s3_client(
@@ -1502,130 +1532,23 @@ async fn make_s3_client(
     let aws_config = aws_config_builder.load().await;
 
     let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config)
-        .app_name(aws_config::AppName::new(APP_NAME).expect("BUG: hard-coded app name is invalid"));
+        .app_name(aws_config::AppName::new(APP_NAME).expect("BUG: hard-coded app name is invalid"))
+        .interceptor(UserAgentInterceptor {
+            user_agent: config
+                .user_agent
+                .clone()
+                .map(|ua| HeaderValue::from_str(&ua))
+                .transpose()
+                .map_err(|err| crate::S3TarError::HeaderValueConvertion { source: err })?,
+        });
+
     if let Some(s3_endpoint) = &config.s3_endpoint {
         s3_config_builder = s3_config_builder.endpoint_url(s3_endpoint.to_string());
     }
 
     let s3_config = s3_config_builder.build();
 
-    let smithy_client = make_smithy_client(config, &s3_config);
-
-    Ok(aws_sdk_s3::Client::with_config(smithy_client, s3_config))
-}
-
-/// Make an AWS SDK [`aws_smithy_client::erase::DynClient`] instance that is pre-configured with middleware
-/// that will set the user agent to the value specified in `config`, if any.
-///
-/// This ugly bit of hackery is mostly copy-pasted from
-/// [`aws_sdk_s3::Client::from_conf`](https://docs.rs/aws-sdk-s3/0.24.0/aws_sdk_s3/struct.Client.html#method.from_conf),
-/// but modified to add some custom middleware that will overwrite whatever user agent string the
-/// AWS SDK normally uses, replacing it with a user-provided user agent from our [`Config`] type.
-fn make_smithy_client(
-    ssstar_config: &Config,
-    s3_config: &aws_sdk_s3::Config,
-) -> aws_smithy_client::erase::DynClient<aws_smithy_client::retry::Standard> {
-    // Make a custom Smithy client so that we can fully control the user agent.
-    //
-    // Inspired by the approach used in https://github.com/awslabs/amazon-qldb-shell/blob/main/src/awssdk_driver.rs
-
-    /// A [`aws_smithy_http::middleware::MapRequest`] impl which modifies Smithy HTTP requests to
-    /// replace whatever User-Agent header was present, if any, with a specific user agent string.
-    #[derive(Clone, Debug)]
-    struct UserAgent(Option<String>);
-
-    impl MapRequest for UserAgent {
-        type Error = Box<dyn Error + Send + Sync + 'static>;
-
-        fn name(&self) -> &'static str {
-            stringify!(UserAgent)
-        }
-
-        fn apply(&self, request: operation::Request) -> Result<operation::Request, Self::Error> {
-            if let Some(ua) = self.0.as_ref() {
-                request.augment(|mut req, _conf| {
-                    req.headers_mut().insert(
-                        HeaderName::from_static("user-agent"),
-                        HeaderValue::from_str(ua)?,
-                    );
-                    Ok(req)
-                })
-            } else {
-                Ok(request)
-            }
-        }
-    }
-
-    // ********************
-    // this is where the copy-paste from aws_sdk_s3::Client::from_conf starts.  that code uses the
-    // var name `conf` for the S3 client config, and to avoid too many changes in the event we have
-    // to copy-paste this again from an updated version, we'll do the same here.
-    let conf = s3_config;
-
-    let retry_config = conf
-        .retry_config()
-        .cloned()
-        .unwrap_or_else(aws_smithy_types::retry::RetryConfig::disabled);
-    let timeout_config = conf
-        .timeout_config()
-        .cloned()
-        .unwrap_or_else(aws_smithy_types::timeout::TimeoutConfig::disabled);
-    let sleep_impl = conf.sleep_impl();
-    if (retry_config.has_retry() || timeout_config.has_timeouts()) && sleep_impl.is_none() {
-        panic!("An async sleep implementation is required for retries or timeouts to work. \
-                                    Set the `sleep_impl` on the Config passed into this function to fix this panic.");
-    }
-
-    let connector = conf.http_connector().and_then(|c| {
-        let timeout_config = conf
-            .timeout_config()
-            .cloned()
-            .unwrap_or_else(aws_smithy_types::timeout::TimeoutConfig::disabled);
-        let connector_settings =
-            aws_smithy_client::http_connector::ConnectorSettings::from_timeout_config(
-                &timeout_config,
-            );
-        c.connector(&connector_settings, conf.sleep_impl())
-    });
-
-    let builder = aws_smithy_client::Builder::new();
-
-    let builder = match connector {
-        // Use provided connector
-        Some(c) => builder.connector(c),
-        None => {
-            #[cfg(any(feature = "rustls", feature = "native-tls"))]
-            {
-                // Use default connector based on enabled features
-                builder.dyn_https_connector(
-                    aws_smithy_client::http_connector::ConnectorSettings::from_timeout_config(
-                        &timeout_config,
-                    ),
-                )
-            }
-            #[cfg(not(any(feature = "rustls", feature = "native-tls")))]
-            {
-                panic!("No HTTP connector was available. Enable the `rustls` or `native-tls` crate feature or set a connector to fix this.");
-            }
-        }
-    };
-    let mut builder = builder
-        .middleware(aws_smithy_client::erase::DynMiddleware::new(
-            ServiceBuilder::new()
-                .layer(aws_sdk_s3::middleware::DefaultMiddleware::new())
-                // Requests are processed in the order in which `layer` is called.  We want our
-                // `UserAgent` map request type to be the last thing that sees the request, because
-                // we want to replace the user agent that the AWS SDK generates by default with our
-                // own custom user agent.
-                .layer(MapRequestLayer::for_mapper(UserAgent(
-                    ssstar_config.user_agent.clone(),
-                ))),
-        ))
-        .retry_config(retry_config.into())
-        .operation_timeout_config(timeout_config.into());
-    builder.set_sleep_impl(sleep_impl);
-
-    builder.build_dyn()
+    Ok(aws_sdk_s3::Client::from_conf(s3_config))
 }
 
 /// Find the longest common prefix shared by two string slices.

@@ -4,6 +4,11 @@ use url::Url;
 
 pub type Result<T, E = S3TarError> = std::result::Result<T, E>;
 
+use aws_smithy_http::{body::SdkBody, result::SdkError as RawSdkError};
+use http::Response;
+
+pub(crate) type SdkError<T> = RawSdkError<T, Response<SdkBody>>;
+
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum S3TarError {
@@ -24,22 +29,20 @@ pub enum S3TarError {
     ))]
     BucketInvalidOrNotAccessible {
         bucket: String,
-        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::head_bucket::HeadBucketError>,
+        source: SdkError<aws_sdk_s3::operation::head_bucket::HeadBucketError>,
     },
 
     #[snafu(display("Error checking if versioning is enabled on S3 bucket '{bucket}'"))]
     GetBucketVersioning {
         bucket: String,
-        source: aws_sdk_s3::error::SdkError<
-            aws_sdk_s3::operation::get_bucket_versioning::GetBucketVersioningError,
-        >,
+        source: SdkError<aws_sdk_s3::operation::get_bucket_versioning::GetBucketVersioningError>,
     },
 
     #[snafu(display("Error getting metadata about object '{key}' on S3 bucket '{bucket}'"))]
     HeadObject {
         bucket: String,
         key: String,
-        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::head_object::HeadObjectError>,
+        source: SdkError<aws_sdk_s3::operation::head_object::HeadObjectError>,
     },
 
     #[snafu(display("Object '{key}' in S3 bucket '{bucket}' doesn't exist"))]
@@ -52,15 +55,13 @@ pub enum S3TarError {
     ListObjectsInPrefix {
         bucket: String,
         prefix: String,
-        source:
-            aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Error>,
+        source: SdkError<aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Error>,
     },
 
     #[snafu(display("Error listing objects in S3 bucket '{bucket}'"))]
     ListObjectsInBucket {
         bucket: String,
-        source:
-            aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Error>,
+        source: SdkError<aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Error>,
     },
 
     #[snafu(display("Error getting object '{key}'{} in S3 bucket '{bucket}'",
@@ -69,7 +70,7 @@ pub enum S3TarError {
         bucket: String,
         key: String,
         version_id: Option<String>,
-        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>,
+        source: SdkError<aws_sdk_s3::operation::get_object::GetObjectError>,
     },
 
     #[snafu(display(
@@ -78,9 +79,8 @@ pub enum S3TarError {
     CreateMultipartUpload {
         bucket: String,
         key: String,
-        source: aws_sdk_s3::error::SdkError<
-            aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError,
-        >,
+        source:
+            SdkError<aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError>,
     },
 
     #[snafu(display(
@@ -90,7 +90,7 @@ pub enum S3TarError {
         bucket: String,
         key: String,
         part_number: usize,
-        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::upload_part::UploadPartError>,
+        source: SdkError<aws_sdk_s3::operation::upload_part::UploadPartError>,
     },
 
     #[snafu(display(
@@ -99,7 +99,7 @@ pub enum S3TarError {
     CompleteMultipartUpload {
         bucket: String,
         key: String,
-        source: aws_sdk_s3::error::SdkError<
+        source: SdkError<
             aws_sdk_s3::operation::complete_multipart_upload::CompleteMultipartUploadError,
         >,
     },
@@ -108,7 +108,7 @@ pub enum S3TarError {
     PutObject {
         bucket: String,
         key: String,
-        source: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>,
+        source: SdkError<aws_sdk_s3::operation::put_object::PutObjectError>,
     },
 
     #[snafu(display("Caller abandoned upload of object '{key}' in S3 bucket '{bucket}' before any data was uploaded"))]
@@ -203,7 +203,11 @@ pub enum S3TarError {
     #[snafu(display("Error assume role for role-arn: {}", role_arn))]
     AssumeRole {
         role_arn: String,
-        source:
-            aws_smithy_http::result::SdkError<aws_sdk_sts::operation::assume_role::AssumeRoleError>,
+        source: SdkError<aws_sdk_sts::operation::assume_role::AssumeRoleError>,
+    },
+
+    #[snafu(display("Failed to convert `&str` into `HeaderValue`"))]
+    HeaderValueConvertion {
+        source: http::header::InvalidHeaderValue,
     },
 }
