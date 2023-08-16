@@ -1466,10 +1466,9 @@ impl Interceptor for UserAgentInterceptor {
         let request = context.request_mut();
 
         if let Some(ua) = self.user_agent.clone() {
-            const HEADER_NAME: &str = "user-agent";
             request
                 .headers_mut()
-                .insert(HeaderName::from_static(HEADER_NAME), ua);
+                .insert(HeaderName::from_static("user-agent"), ua);
         }
 
         Ok(())
@@ -1535,8 +1534,8 @@ async fn make_s3_client(
         .interceptor(UserAgentInterceptor {
             user_agent: config
                 .user_agent
-                .clone()
-                .map(|ua| HeaderValue::from_str(&ua))
+                .as_ref()
+                .map(|ua| HeaderValue::from_str(ua))
                 .transpose()
                 .map_err(|err| crate::S3TarError::HeaderValueConvertion { source: err })?,
         });
