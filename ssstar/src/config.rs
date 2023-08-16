@@ -152,7 +152,7 @@ impl Default for Config {
             multipart_threshold: byte_unit::Byte::from_bytes(8 * 1024 * 1024),
             max_concurrent_requests: 10,
             max_queue_size: 1000,
-            user_agent: Some("ssstar".to_owned()),
+            user_agent: None,
         }
     }
 }
