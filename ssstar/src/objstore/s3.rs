@@ -4,8 +4,12 @@ use aws_config::{
     default_provider::credentials::DefaultCredentialsChain, meta::region::RegionProviderChain,
     sts::AssumeRoleProvider,
 };
-use aws_sdk_s3::config::Credentials;
+use aws_sdk_s3::config::{ConfigBag, Credentials, Interceptor};
 use aws_smithy_http::event_stream::BoxError;
+use aws_smithy_runtime_api::client::{
+    interceptors::context::BeforeTransmitInterceptorContextMut,
+    runtime_components::RuntimeComponents,
+};
 use aws_types::region::Region;
 use futures::{Stream, StreamExt};
 use http::{header::HeaderName, HeaderValue};
@@ -1446,11 +1450,6 @@ impl MultipartUploader for S3MultipartUploader {
         Ok(())
     }
 }
-
-use aws_sdk_s3::config::ConfigBag;
-use aws_sdk_s3::config::Interceptor;
-use aws_smithy_runtime_api::client::interceptors::context::BeforeTransmitInterceptorContextMut;
-use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
 
 #[derive(Debug)]
 pub struct UserAgentInterceptor {
