@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.7.0 - 18-Aug-2023
+
+### Changes
+
+* Update to Rust version 1.71.0
+* Update `aws-sdk-*` crates to version `0.27.0`
+* Update `aws-smithy-*` crates to version `0.56`
+
 ## 0.6.0 - 07-Jul-2023
 
 ### Changes
@@ -31,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Rename several `CreateProgressCallback` methods to remove the `tar_` prefix to reflect the fact that the archive might
 not be tar format in the future.
 * Change `CreateProgressCallback` trait to add data `byte_offset` and object `timestamp` parameters to `archive_object_written` method
-  
+
   This is a bit of an abuse of the progress callback since this information is not needed for progress reporting and
   instead will be used in Elastio to populate the index of the S3 backup, however it's an easy change to make that will
   facilitate our initial indexing impl without having to wait for the new storage API to stabilize.
