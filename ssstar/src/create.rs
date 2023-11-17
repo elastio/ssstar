@@ -194,6 +194,7 @@ impl CreateArchiveInput {
     ///
     /// This could be a long-running operation if a bucket or prefix is specified which contains
     /// hundreds of thousands or millions of objects.
+    #[instrument(err, skip(self))]
     async fn into_possible_input_objects(self) -> Result<Vec<InputObject>> {
         // Enumerating objects is an object storage implementation-specific operation
         let input_text = self.to_string();
