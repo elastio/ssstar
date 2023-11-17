@@ -175,19 +175,28 @@ impl CreateArchiveInput {
         }
     }
 
+    /// It's the same function like [`Self::into_possible_input_objects`] but with one exception
+    /// that if this object selector doesn't match any objects, an error is raised, since it likely
+    /// indicates a mistake on the user's part.
+    #[instrument(err, skip(self))]
+    async fn into_input_objects(self) -> Result<Vec<InputObject>> {
+        let input_text = self.to_string();
+        let input_objects = self.into_possible_input_objects().await?;
+        if input_objects.is_empty() {
+            crate::error::SelectorMatchesNoObjectsSnafu { input: input_text }.fail()
+        } else {
+            Ok(input_objects)
+        }
+    }
+
     /// Evaluate the input against the actual object store API and return all objects that
     /// corresond to this input.
     ///
     /// This could be a long-running operation if a bucket or prefix is specified which contains
     /// hundreds of thousands or millions of objects.
-    ///
-    /// If this object selector doesn't match any objects, an error is raised, since it likely
-    /// indicates a mistake on the user's part.
-    #[instrument(err, skip(self))]
-    async fn into_input_objects(self) -> Result<Vec<InputObject>> {
+    async fn into_possible_input_objects(self) -> Result<Vec<InputObject>> {
         // Enumerating objects is an object storage implementation-specific operation
         let input_text = self.to_string();
-
         debug!(self = %input_text, "Listing all object store objects that match this archive input");
         let input_objects = self.bucket.list_matching_objects(self.selector).await?;
         debug!(
@@ -195,12 +204,7 @@ impl CreateArchiveInput {
             count = input_objects.len(),
             "Listing matching objects completed"
         );
-
-        if input_objects.is_empty() {
-            crate::error::SelectorMatchesNoObjectsSnafu { input: input_text }.fail()
-        } else {
-            Ok(input_objects)
-        }
+        Ok(input_objects)
     }
 }
 
@@ -309,6 +313,7 @@ pub struct CreateArchiveJobBuilder {
     config: Config,
     target: TargetArchive,
     inputs: Vec<CreateArchiveInput>,
+    allow_empty: bool,
 }
 
 impl CreateArchiveJobBuilder {
@@ -318,7 +323,14 @@ impl CreateArchiveJobBuilder {
             config,
             target,
             inputs: vec![],
+            allow_empty: false,
         }
+    }
+
+    /// Set a flag to indicate whether job can be created without objects.
+    /// By default it is `false`.
+    pub fn allow_empty(&mut self, allow: bool) {
+        self.allow_empty = allow;
     }
 
     /// Add one input URL to the job, validating the URL as part of the process.
@@ -364,16 +376,22 @@ impl CreateArchiveJobBuilder {
             "Listing objects for all inputs"
         );
 
-        let input_futs = self
-            .inputs
-            .into_iter()
-            .map(move |input| input.into_input_objects());
-
-        let mut inputs = futures::future::try_join_all(input_futs)
-            .await?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let mut inputs = if self.allow_empty {
+            let input_futs = self
+                .inputs
+                .into_iter()
+                .map(move |input| input.into_possible_input_objects());
+            futures::future::try_join_all(input_futs).await?
+        } else {
+            let input_futs = self
+                .inputs
+                .into_iter()
+                .map(move |input| input.into_input_objects());
+            futures::future::try_join_all(input_futs).await?
+        }
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
         debug!(
             object_count = inputs.len(),
@@ -399,6 +417,7 @@ impl CreateArchiveJobBuilder {
             config: self.config,
             target: self.target,
             inputs,
+            allow_empty: self.allow_empty,
         })
     }
 }
@@ -568,6 +587,7 @@ pub struct CreateArchiveJob {
     config: Config,
     target: TargetArchive,
     inputs: Vec<InputObject>,
+    allow_empty: bool,
 }
 
 impl CreateArchiveJob {
@@ -609,7 +629,7 @@ impl CreateArchiveJob {
         progress.input_objects_download_starting(total_objects, total_bytes);
 
         // There must be at least one object otherwise it doesn't make sense to proceed
-        if total_objects == 0 {
+        if total_objects == 0 && !self.allow_empty {
             return crate::error::NoInputsSnafu {}.fail();
         }
 
