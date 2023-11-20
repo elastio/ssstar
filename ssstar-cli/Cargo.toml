@@ -33,7 +33,7 @@ clap               = { workspace = true }
 color-eyre         = { workspace = true }
 futures            = { workspace = true }
 indicatif          = { workspace = true }
-ssstar             = { version = "0.7.0", path = "../ssstar", features = ["clap"] }
+ssstar             = { version = "0.7.1", path = "../ssstar", features = ["clap"] }
 tokio              = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
