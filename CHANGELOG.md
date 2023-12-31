@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.7.2 - 31-Dec-2023
+
+### Changes
+
+* Update `aws-sdk-*` crates to version `1.*.0`
+
 ## 0.7.1 - 20-Nov-2023
 
 * Add ability to create empty archive (#124)
