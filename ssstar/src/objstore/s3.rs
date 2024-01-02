@@ -1,5 +1,5 @@
 use super::{Bucket, MultipartUploader, ObjectStorage};
-use crate::objstore::stream::IntoStream;
+use crate::util::aws_sdk::stream::IntoStream;
 use crate::{create, Config, Result};
 use aws_config::{
     default_provider::credentials::DefaultCredentialsChain, meta::region::RegionProviderChain,

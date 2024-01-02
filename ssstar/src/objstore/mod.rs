@@ -6,7 +6,6 @@ use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 mod s3;
-mod stream;
 
 /// An object storage system like S3.
 ///

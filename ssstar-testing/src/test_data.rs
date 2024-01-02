@@ -297,7 +297,6 @@ where
         results.push(result?);
     }
 
-    // while let Some(result) = results.ne /xt().await {
     for object in results.into_iter().flatten() {
         objects.insert(object.key().unwrap().to_owned(), object);
     }

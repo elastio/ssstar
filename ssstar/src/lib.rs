@@ -11,6 +11,7 @@ mod objstore;
 mod storage;
 mod tar;
 mod writers;
+mod util;
 
 pub use config::Config;
 pub use create::*;
