@@ -13,7 +13,7 @@ use aws_smithy_runtime_api::client::{
 };
 use aws_types::region::Region;
 use futures::{Stream, StreamExt};
-use http::{header::HeaderName, HeaderValue, StatusCode};
+use http::{header::HeaderName, HeaderValue};
 use snafu::{prelude::*, IntoError};
 use std::{
     any::Any,
@@ -574,13 +574,9 @@ impl S3Bucket {
         if let Err(e) = client.head_bucket().bucket(name).send().await {
             if let aws_sdk_s3::error::SdkError::ServiceError(err) = &e {
                 let response = err.raw();
-                // 301 MovedPermanently is the error code for when the bucket is in a different region
-                if response.status() == StatusCode::MOVED_PERMANENTLY.into() {
-                    if let Some(region) = response.headers().get("x-amz-bucket-region") {
-                        // This is AWS's way of telling us we have the right bucket, but it is in
-                        // another region so we should use the appropriate region endpoint
-                        return Ok(Some(region.to_string()));
-                    }
+                // If we have the region header, we can use that
+                if let Some(region) = response.headers().get("x-amz-bucket-region") {
+                    return Ok(Some(region.to_string()));
                 }
             };
 
