@@ -10,8 +10,8 @@ mod objstore;
 #[cfg(feature = "storage")]
 mod storage;
 mod tar;
-mod writers;
 mod util;
+mod writers;
 
 pub use config::Config;
 pub use create::*;
