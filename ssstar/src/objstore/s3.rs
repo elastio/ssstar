@@ -1,13 +1,14 @@
 use super::{Bucket, MultipartUploader, ObjectStorage};
+use crate::util::aws_sdk::stream::IntoStream;
 use crate::{create, Config, Result};
 use aws_config::{
     default_provider::credentials::DefaultCredentialsChain, meta::region::RegionProviderChain,
     sts::AssumeRoleProvider,
 };
-use aws_sdk_s3::config::{ConfigBag, Credentials, Interceptor};
+use aws_sdk_s3::config::{ConfigBag, Credentials};
 use aws_smithy_http::event_stream::BoxError;
 use aws_smithy_runtime_api::client::{
-    interceptors::context::BeforeTransmitInterceptorContextMut,
+    interceptors::context::BeforeTransmitInterceptorContextMut, interceptors::Intercept,
     runtime_components::RuntimeComponents,
 };
 use aws_types::region::Region;
@@ -253,7 +254,7 @@ impl S3Bucket {
                         bucket: dyn_clone::clone_box(self),
                         key: key.clone(),
                         version_id: None,
-                        size: object.size() as u64,
+                        size: object.size().expect("Objects always have a size") as u64,
                         timestamp: object
                             .last_modified()
                             .expect("Objects always have a last modified time")
@@ -573,14 +574,9 @@ impl S3Bucket {
         if let Err(e) = client.head_bucket().bucket(name).send().await {
             if let aws_sdk_s3::error::SdkError::ServiceError(err) = &e {
                 let response = err.raw();
-                if response.status() == http::StatusCode::MOVED_PERMANENTLY {
-                    if let Some(value) = response.headers().get("x-amz-bucket-region") {
-                        if let Ok(region) = value.to_str() {
-                            // This is AWS's way of telling us we have the right bucket, but it is in
-                            // another region so we should use the appropriate region endpoint
-                            return Ok(Some(region.to_string()));
-                        }
-                    }
+                // If we have the region header, we can use that
+                if let Some(region) = response.headers().get("x-amz-bucket-region") {
+                    return Ok(Some(region.to_string()));
                 }
             };
 
@@ -700,7 +696,9 @@ impl Bucket for S3Bucket {
         // In S3 this is done with the HeadObject operation
         let metadata = self.head_object(key, version_id).await?;
 
-        Ok(metadata.content_length() as u64)
+        Ok(metadata
+            .content_length()
+            .expect("Objects always have a content length") as u64)
     }
 
     async fn list_matching_objects(
@@ -725,7 +723,10 @@ impl Bucket for S3Bucket {
                     bucket: dyn_clone::clone_box(self),
                     key: key.to_string(),
                     version_id: metadata.version_id().map(|id| id.to_string()),
-                    size: metadata.content_length() as u64,
+                    size: metadata
+                        .content_length()
+                        .expect("Objects always have a content length")
+                        as u64,
                     timestamp: metadata
                         .last_modified()
                         .expect("Objects always have a last modified time")
@@ -756,7 +757,7 @@ impl Bucket for S3Bucket {
 
                 // Translate this stream of pages of object listings into a stream of AWS SDK
                 // 'Object' structs so we can process them one at a time
-                let objects = pages.map(|result| {
+                let objects = pages.into_stream().map(|result| {
                     let page = result.with_context(|_| crate::error::ListObjectsInPrefixSnafu {
                         bucket: self.inner.name.clone(),
                         prefix: prefix.to_string(),
@@ -811,7 +812,7 @@ impl Bucket for S3Bucket {
 
                 // Translate this stream of pages of object listings into a stream of AWS SDK
                 // 'Object' structs so we can process them one at a time
-                let objects = pages.map(|result| {
+                let objects = pages.into_stream().map(|result| {
                     let page = result.with_context(|_| crate::error::ListObjectsInBucketSnafu {
                         bucket: self.inner.name.clone(),
                     })?;
@@ -900,7 +901,7 @@ impl Bucket for S3Bucket {
 
                 // Translate this stream of pages of object listings into a stream of AWS SDK
                 // 'Object' structs so we can process them one at a time
-                let objects = pages.map(|result| {
+                let objects = pages.into_stream().map(|result| {
                     let page = result.with_context(|_| crate::error::ListObjectsInBucketSnafu {
                         bucket: self.inner.name.clone(),
                     })?;
@@ -1456,7 +1457,7 @@ pub struct UserAgentInterceptor {
     user_agent: Option<HeaderValue>,
 }
 
-impl Interceptor for UserAgentInterceptor {
+impl Intercept for UserAgentInterceptor {
     fn modify_before_signing(
         &self,
         context: &mut BeforeTransmitInterceptorContextMut,
@@ -1515,14 +1516,16 @@ async fn make_s3_client(
             builder = builder.session_length(std::time::Duration::from_secs(seconds));
         }
 
-        let assume_role_provider = builder.build(
-            DefaultCredentialsChain::builder()
-                .region(load_region_provider(
-                    region.clone().or_else(|| config.aws_region.clone()),
-                ))
-                .build()
-                .await,
-        );
+        let assume_role_provider = builder
+            .build_from_provider(
+                DefaultCredentialsChain::builder()
+                    .region(load_region_provider(
+                        region.clone().or_else(|| config.aws_region.clone()),
+                    ))
+                    .build()
+                    .await,
+            )
+            .await;
 
         aws_config_builder = aws_config_builder.credentials_provider(assume_role_provider);
     }

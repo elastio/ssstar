@@ -2,7 +2,7 @@
 use crate::Result;
 use aws_sdk_s3::{primitives::ByteStream, Client};
 use bytes::Bytes;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use rand::prelude::*;
 use sha2::Digest;
 use std::{
@@ -279,7 +279,7 @@ where
     // First list all objects in the bucket and prefix
     let mut objects = HashMap::new();
 
-    let pages = client
+    let mut pages = client
         .list_objects_v2()
         .bucket(bucket)
         .prefix(prefix)
@@ -288,17 +288,17 @@ where
 
     // Translate this stream of pages of object listings into a stream of AWS SDK
     // 'Object' structs so we can process them one at a time
-    let mut pages = pages.map(|result| {
+    let mut results = vec![];
+
+    while let Some(result) = pages.next().await {
         let page = result?;
         let result: Result<Vec<aws_sdk_s3::types::Object>> = Ok(page.contents.unwrap_or_default());
 
-        result
-    });
+        results.push(result?);
+    }
 
-    while let Some(result) = pages.next().await {
-        for object in result? {
-            objects.insert(object.key().unwrap().to_owned(), object);
-        }
+    for object in results.into_iter().flatten() {
+        objects.insert(object.key().unwrap().to_owned(), object);
     }
 
     // Verify all of the expected keys are actually present in the `test_data` hash table, and make

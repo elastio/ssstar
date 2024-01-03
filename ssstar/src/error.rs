@@ -4,10 +4,9 @@ use url::Url;
 
 pub type Result<T, E = S3TarError> = std::result::Result<T, E>;
 
-use aws_smithy_http::{body::SdkBody, result::SdkError as RawSdkError};
-use http::Response;
+use aws_smithy_runtime_api::{client::result::SdkError as RawSdkError, http::Response};
 
-pub(crate) type SdkError<T> = RawSdkError<T, Response<SdkBody>>;
+pub(crate) type SdkError<T> = RawSdkError<T, Response>;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
@@ -118,7 +117,7 @@ pub enum S3TarError {
     ReadByteStream {
         bucket: String,
         key: String,
-        source: aws_smithy_http::byte_stream::error::Error,
+        source: aws_smithy_types::byte_stream::error::Error,
     },
 
     #[snafu(display("Unable to create new object '{key}' in S3 bucket '{bucket}', because the expected size of {size} bytes is larger than the 5TB maximum object size"))]

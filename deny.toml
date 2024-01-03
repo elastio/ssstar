@@ -216,6 +216,16 @@ skip = [
   # `clap` we still will have an issue, but now with 2 more crates:
   # linux-raw-sys 0.3.8 and rustix 0.37.19 that the freshest of clap uses
   { name = "fastrand", version = "1.9.0" },
+
+  # one of the dependencies of `aws-sigv4 v 1.1.1` crate depends on this outdated version of crate
+  { name = "crypto-bigint", version = "=0.4.9" },
+
+  # one of the dependencies of `aws-smithy-runtime v.1.1.1` crate depends on this outdated version of crates
+  { name = "ring", version = "=0.16.20" },
+  { name = "untrusted", version = "=0.7.1" },
+
+  # ring v0.16.20 depend on this outdated version of crate
+  { name = "spin", version = "=0.5.2" },
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive
