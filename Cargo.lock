@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "ssstar"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "assert_matches",
  "async-trait",
@@ -2449,7 +2449,7 @@ dependencies = [
 
 [[package]]
 name = "ssstar-cli"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "byte-unit",
  "chrono",
@@ -2467,7 +2467,7 @@ dependencies = [
 
 [[package]]
 name = "ssstar-testing"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "again",
  "aws-config",
