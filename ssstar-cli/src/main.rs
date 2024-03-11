@@ -11,7 +11,7 @@ mod progress;
 // NB: can't use git info here because when this crate is published to crates.io there is no
 // git metadata
 const VERSION_DETAILS: &str = concat!(
-    env!("VERGEN_BUILD_SEMVER"),
+    env!("CARGO_PKG_VERSION"),
     " (",
     "target ",
     env!("VERGEN_CARGO_TARGET_TRIPLE"),

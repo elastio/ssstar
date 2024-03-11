@@ -31,7 +31,7 @@ use tokio::{
 use tracing::{debug, error, instrument, warn, Instrument};
 use url::Url;
 
-const APP_NAME: &str = concat!(env!("CARGO_PKG_NAME"), "-", env!("VERGEN_BUILD_SEMVER"),);
+const APP_NAME: &str = concat!(env!("CARGO_PKG_NAME"), "-", env!("CARGO_PKG_VERSION"),);
 
 /// Implementation of [`ObjectStorage`] for S3 and S3-compatible APIs
 #[derive(Clone)]
