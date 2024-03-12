@@ -75,6 +75,6 @@ dotenv         = { workspace = true }
 dotenv_codegen = { workspace = true }
 more-asserts   = { workspace = true }
 rand           = { workspace = true }
-ssstar-testing = { version = "0.7.2", path = "../ssstar-testing" }
+ssstar-testing = { version = "0.7.3", path = "../ssstar-testing" }
 strum          = { workspace = true }
 tempfile       = { workspace = true }

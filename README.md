@@ -170,7 +170,7 @@ functionality into your Rust application.  Just add `ssstar` as a dependency in 
 
 ```toml
 [dependencies]
-ssstar = "0.7.2"
+ssstar = "0.7.3"
 ```
 
 See the [docs.rs](https://docs.rs/ssstar) documentation for `ssstar` for more details and some examples.  You can also
