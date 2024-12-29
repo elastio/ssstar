@@ -21,7 +21,7 @@ jobs:
         with:
           profile: minimal
           override: true
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Publish ssstar-testing
         uses: actions-rs/cargo@v1
         with:
