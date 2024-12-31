@@ -49,7 +49,7 @@ jobs:
         with:
           profile: minimal
           target: ${{ matrix.job.target }}
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Install Ubuntu MUSL deps
         run: |
           sudo apt-get install musl musl-dev musl-tools
