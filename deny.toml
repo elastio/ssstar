@@ -56,10 +56,6 @@ ignore = [
   # We should probably update to dotenvy, but we use dotenv only in test code so there's
   # no immediate urgency
   "RUSTSEC-2021-0141",
-
-  # This `time` UB seems to be a gross over-reaction.  Anyway this is a transitive dependency via chrono,
-  # we are not able to update directly
-  "RUSTSEC-2020-0071",
 ]
 # Threshold for security vulnerabilities, any vulnerability with a CVSS score
 # lower than the range specified will be ignored. Note that ignored advisories
