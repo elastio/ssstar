@@ -89,7 +89,7 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
 #[cfg(unix)]
 /// On unix this will never fail
 pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
-    Ok(p.as_os_str().as_bytes()).map(Cow::Borrowed)
+    Ok(Cow::Borrowed(p.as_os_str().as_bytes()))
 }
 
 #[cfg(target_arch = "wasm32")]

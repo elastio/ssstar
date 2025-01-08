@@ -1,6 +1,6 @@
 use crate::{create, Config, Result};
 use dyn_clone::DynClone;
-use std::{any::Any, ops::Range};
+use std::ops::Range;
 use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, oneshot};
 use url::Url;
@@ -19,11 +19,6 @@ mod s3;
 /// of increasing the ref count on an `Arc`
 #[async_trait::async_trait]
 pub(crate) trait ObjectStorage: DynClone + std::fmt::Debug + Sync + Send + 'static {
-    /// A string that identifies the object storage technology this instance corresponds to.
-    ///
-    /// For example for S3 the string might be "s3"
-    fn typ(&self) -> &'static str;
-
     /// Given a URL that contains a bucket and might also contain an object key and version ID,
     /// extract all of those components.
     ///
@@ -53,13 +48,6 @@ dyn_clone::clone_trait_object!(ObjectStorage);
 /// of increasing the ref count on an `Arc`
 #[async_trait::async_trait]
 pub(crate) trait Bucket: DynClone + std::fmt::Debug + Sync + Send + 'static {
-    /// HACK so that implementations can downcast from `Arc<dyn Bucket>` to the
-    /// implementation-specific type.  Pretend you didn't see this.
-    #[doc(hidden)]
-    fn as_any(&self) -> &(dyn Any + Sync + Send);
-
-    fn objstore(&self) -> Box<dyn ObjectStorage>;
-
     fn name(&self) -> &str;
 
     /// Query the size of the specified object
@@ -199,13 +187,6 @@ pub(crate) trait MultipartUploader: DynClone + Sync + Send + 'static {
     /// This must be called exactly once, and must be the first call made on this object.
     /// `upload_part` and `finish` will panic if `init` isn't called first.
     async fn init(&self) -> Result<()>;
-
-    /// The parts of the object to upload.
-    ///
-    /// These are always sorted in order from lowest to highest starting offset, and are always
-    /// contiguous and non-overlapping.  Parts can be uploaded in any order, as long as they are
-    /// all uploaded.
-    fn parts(&self) -> &[Range<u64>];
 
     /// Upload a part of this object.
     ///
