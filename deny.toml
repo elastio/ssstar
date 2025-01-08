@@ -92,6 +92,8 @@ allow = [
   "ISC",
   "OpenSSL",
   "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "Zlib",
 ]
 # List of explicitly disallowed licenses
 # See https://spdx.org/licenses/ for list of possible licenses
@@ -247,6 +249,22 @@ skip-tree = [
   { name = "windows-sys", version = "0.42.*", depth = 20 },
   { name = "windows-sys", version = "0.45.*", depth = 20 },
   { name = "windows", version = "0.48.*", depth = 20 },
+
+  # mio
+  { name = "windows-sys", version = "0.52.*", depth = 20 },
+
+  # matchers (dep of tracing-subscriber)
+  { name = "regex-automata", version = "0.1.*", depth = 20 },
+
+  # multiple AWS crates
+  { name = "http-body", version = "0.4.*", depth = 20 },
+
+  # multiple AWS crates
+  { name = "http-body", version = "0.4.*", depth = 20 },
+  { name = "http", version = "0.2.*", depth = 20 },
+
+  # snafu
+  { name = "heck", version = "0.4.*", depth = 20 },
 ]
 
 # This section is considered when running `cargo deny check sources`.
