@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.71.0
+        uses: dtolnay/rust-toolchain@1.81.0
       - uses: Swatinem/rust-cache@v1
       - name: Publish ssstar-testing
         uses: actions-rs/cargo@v1
