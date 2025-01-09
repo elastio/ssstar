@@ -47,7 +47,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.81.0
         with:
           targets: ${{ matrix.job.target }}
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Install Ubuntu MUSL deps
         run: |
           sudo apt-get install musl musl-dev musl-tools
