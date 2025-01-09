@@ -14,7 +14,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --all-features
           command: check advisories
@@ -42,7 +42,7 @@ jobs:
           #
           toolchain: nightly-2023-06-15
       - uses: Swatinem/rust-cache@v2
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --all-features
           command: check bans licenses sources
