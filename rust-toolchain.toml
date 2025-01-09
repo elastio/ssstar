@@ -1,0 +1,7 @@
+[toolchain]
+
+# NB: Per https://github.com/dtolnay/rust-toolchain/issues/12, the GHA action that we use to install the Rust toolchain
+# in CI does not and probably never will honor `rust-toolchain`.  So if you ever update this Rust version, make sure
+# that you also modify the GHA workflows in `.github/workflows/` to use the same version, or some confusing artifacts
+# will likely present themselves.
+channel = "1.81.0"

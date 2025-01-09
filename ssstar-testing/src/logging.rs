@@ -107,7 +107,7 @@ pub fn test_with_logging(test: impl Future<Output = Result<()>>) -> Result<()> {
 
     tracing::dispatcher::with_default(&dispatch, || {
         std::thread_local! {
-            static THREAD_DISPATCHER_GUARD: RefCell<Option<tracing::subscriber::DefaultGuard>> = RefCell::new(None);
+            static THREAD_DISPATCHER_GUARD: RefCell<Option<tracing::subscriber::DefaultGuard>> = const { RefCell::new(None) };
         }
 
         let mut builder = tokio::runtime::Builder::new_multi_thread();

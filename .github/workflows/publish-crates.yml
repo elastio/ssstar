@@ -3,7 +3,7 @@ name: Publish crates to crates.io
 on:
   push:
     tags:
-      - '[v]?[0-9]+.[0-9]+.[0-9]+'
+      - "[v]?[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
   publish-cargo:
@@ -17,10 +17,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          override: true
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.81.0
       - uses: Swatinem/rust-cache@v1
       - name: Publish ssstar-testing
         uses: actions-rs/cargo@v1

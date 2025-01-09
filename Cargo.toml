@@ -1,6 +1,6 @@
 [workspace]
+members  = ["ssstar", "ssstar-cli", "ssstar-testing"]
 resolver = "2"
-members = ["ssstar", "ssstar-cli", "ssstar-testing"]
 
 [workspace.package]
 authors       = ["Adam Nelson <adam@elastio.com>"]
@@ -66,7 +66,7 @@ tracing-appender         = "0.2"
 tracing-subscriber       = { version = "0.3", features = ["env-filter", "fmt", "local-time"] }
 tracing-test             = "0.2.4"
 typenum                  = "1.15.0"
-url                      = "2.3"
-vergen                   = { version = "8.0", features = ["cargo"]}
+url                      = "2"
+vergen                   = { version = "8.0", features = ["cargo"] }
 walkdir                  = "2"
 which                    = "4"

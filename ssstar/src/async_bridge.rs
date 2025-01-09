@@ -170,7 +170,7 @@ mod tests {
             }
 
             // Now all of the data is read, so the next attempt to read should yield zero bytes
-            let mut dummy = vec![0u8; 100];
+            let mut dummy = [0u8; 100];
             assert_eq!(0, reader.read(&mut dummy[..]).unwrap());
 
             read_data

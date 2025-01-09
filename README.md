@@ -1,7 +1,7 @@
-ssstar
-------------
+## ssstar
+
 ssstar is a Rust library crate as well as a command-line tool to create and extract `tar`-compatible archives containing
-objects stored in S3 or S3-compatible storage.  It works similarly to GNU `tar`, and produces archives that are 100%
+objects stored in S3 or S3-compatible storage. It works similarly to GNU `tar`, and produces archives that are 100%
 compatible with `tar`, though it uses different command line arguments.
 
 [![Crates.io](https://img.shields.io/crates/v/ssstar.svg)](https://crates.io/crates/ssstar)
@@ -11,9 +11,9 @@ compatible with `tar`, though it uses different command line arguments.
 ![Crates.io](https://img.shields.io/crates/l/ssstar)
 
 `ssstar` provides a cross-platform Rust-powered CLI as well as a Rust library crate that lets you create tar archives
-containing objects from S3 and S3-compatible object storage, regardless of size.  `ssstar` applies concurrency
+containing objects from S3 and S3-compatible object storage, regardless of size. `ssstar` applies concurrency
 aggressively, and uses a streaming design which means even multi-TB objects can be processed with minimal memory
-utilization.  The resulting tar archive can itself be uploaded to object storage, written to a local file, or written
+utilization. The resulting tar archive can itself be uploaded to object storage, written to a local file, or written
 to `stdout` and piped to another command line tool.
 
 We built `ssstar` so our customers using the `elastio` cloud native backup and recovery CLI could backup and restore S3
@@ -27,12 +27,12 @@ whenever you need to package one or more S3 objects into a tarball.
 On any supported platform (meaning Windows, macOS (both Intel and Apple Silicon) and Linux), if you have a recent Rust
 compiler installed you can use `cargo install` to get the ssstar CLI:
 
-* Ensure you have at least Rust 1.63.0 installed by following [this](https://www.rust-lang.org/tools/install) guide.
-* Run `cargo install ssstar-cli --locked` to compile `ssstar` from source and install locally.
+- Ensure you have at least Rust 1.63.0 installed by following [this](https://www.rust-lang.org/tools/install) guide.
+- Run `cargo install ssstar-cli --locked` to compile `ssstar` from source and install locally.
 
 ### Precompiled binaries
 
-See the [GitHub Releases](/elastio/ssstar/releases) for pre-compiled binaries for Windows, mac, and Linux.
+See the [GitHub Releases](https://github.com/elastio/ssstar/releases/latest) for pre-compiled binaries for Windows, mac, and Linux.
 
 ## Usage (without Elastio)
 
@@ -64,7 +64,7 @@ ssstar create \
 ```
 
 You can pass multiple inputs to `ssstar create`, using a mix of entire buckets, prefixes, specific objects, and globs.
-Just make sure that when you use globs you wrap them in quotes, otherwise your shell may try to evaluate them.  For
+Just make sure that when you use globs you wrap them in quotes, otherwise your shell may try to evaluate them. For
 example:
 
 ```shell
@@ -88,7 +88,7 @@ ssstar extract --file ./backup.tar s3://my-bucket
 ```
 
 Each file in the tar archive will be written to the bucket `my-bucket`, with the object key equal to the file path
-within the archive.  For example if the archive contains a file `foo/bar/baz.txt`, that file will be written to
+within the archive. For example if the archive contains a file `foo/bar/baz.txt`, that file will be written to
 `s3://my-bucket/foo/bar/baz.txt`.
 
 You can provide not just a target bucket but also a prefix as well, e.g.:
@@ -99,12 +99,12 @@ ssstar extract --file ./backup.tar s3://my-bucket/restored/
 ```
 
 In that case, if the tar archive contains a file `foo/bar/baz.txt`, it will be written to
-`s3://my-bucket/restored/foo/bar/baz.txt`.  *NOTE*: In S3, prefixes don't necessarily end in `/`; if you don't provide
-the trailing `/` character to the S3 URL passed to `ssstar extract`, it will not be added for you!  Instead you'll get
+`s3://my-bucket/restored/foo/bar/baz.txt`. _NOTE_: In S3, prefixes don't necessarily end in `/`; if you don't provide
+the trailing `/` character to the S3 URL passed to `ssstar extract`, it will not be added for you! Instead you'll get
 something like `s3://my-bucket/restoredfoo/bar/baz`, which may or may not be what you actually want!
 
-If you don't want to extract the full contents of the archive, you can specify one or more filters.  These can be exact
-file paths, directory paths ending in `/`, or globs.  For example:
+If you don't want to extract the full contents of the archive, you can specify one or more filters. These can be exact
+file paths, directory paths ending in `/`, or globs. For example:
 
 ```shell
 ssstar extract --file ./backup.tar \
@@ -117,8 +117,7 @@ ssstar extract --file ./backup.tar \
 ## Usage (with Elastio)
 
 To use with Elastio, create archives with the `--stdout` option and pipe to `elastio stream backup`, and restore them by piping
-`elastio stream restore` to `ssstar extract` with the `--stdin` option.  For example:
-
+`elastio stream restore` to `ssstar extract` with the `--stdin` option. For example:
 
 ```shell
 # Backup an entire S3 bucket `my-source-bucket` to the default Elastio vault:
@@ -137,13 +136,13 @@ For more about using the Elastio CLI, see the [Elastio CLI docs](https://docs.el
 ## Advanced CLI Options
 
 Run `ssstar create --help` and `ssstar extract --help` to get the complete CLI usage documentation for archive creation
-and extraction, respectively.  There are a few command line options that are particularly likely to be of interest:
+and extraction, respectively. There are a few command line options that are particularly likely to be of interest:
 
 ### Using a custom S3 endpoint
 
 `ssstar` is developed and tested against AWS S3, however it should work with any object storage system that provides an
-S3-compatible API.  In particular, most of the automated tests our CI system runs actually use [Minio](https://min.io)
-and not the real S3 API.  To use `ssstar` with an S3-compatible API, use the `--s3-endpoint` option.  For example, if
+S3-compatible API. In particular, most of the automated tests our CI system runs actually use [Minio](https://min.io)
+and not the real S3 API. To use `ssstar` with an S3-compatible API, use the `--s3-endpoint` option. For example, if
 you have a Minio server running at `127.0.7.1:30000`, using default `minioadmin` credentials, you can use it with
 `ssstar` like this:
 
@@ -156,24 +155,24 @@ ssstar --s3-endpoint http://127.0.0.1:30000 \
 ### Controlling Concurrency
 
 The `--max-concurrent-requests` argument controls how many concurrent S3 API operations will be performed in each stage
-of the archive creation or extraction process.  The default is 10, because that is what the AWS CLI uses.  However if
+of the archive creation or extraction process. The default is 10, because that is what the AWS CLI uses. However if
 you are running `ssstar` on an EC2 instance with multi-gigabit Ethernet connectivity to S3, 10 concurrent requests may
-not be enough to saturate the network connection.  Experiment with larger values to see if you experience faster
+not be enough to saturate the network connection. Experiment with larger values to see if you experience faster
 transfer times with more concurrency.
 
 ## Usage (in a Rust project)
 
-The library crate [`ssstar`](https://crates.io/crates/ssstar) is the engine that powers the `ssstar` CLI.  When we wrote
+The library crate [`ssstar`](https://crates.io/crates/ssstar) is the engine that powers the `ssstar` CLI. When we wrote
 `ssstar` we deliberately kept all of the functionality in a library crate with a thin CLI wrapper on top, because
-`ssstar` is being used internally in Elastio to power our upcoming S3 backup feature.  You too can integrate `ssstar`
-functionality into your Rust application.  Just add `ssstar` as a dependency in your `Cargo.toml`:
+`ssstar` is being used internally in Elastio to power our upcoming S3 backup feature. You too can integrate `ssstar`
+functionality into your Rust application. Just add `ssstar` as a dependency in your `Cargo.toml`:
 
 ```toml
 [dependencies]
 ssstar = "0.7.3"
 ```
 
-See the [docs.rs](https://docs.rs/ssstar) documentation for `ssstar` for more details and some examples.  You can also
+See the [docs.rs](https://docs.rs/ssstar) documentation for `ssstar` for more details and some examples. You can also
 look at the `ssstar` CLI code [`ssstar-cli/main.rs`](`main.rs`) to see how we implemented our CLI in terms of the
 `ssstar` library crate.
 
@@ -181,10 +180,10 @@ look at the `ssstar` CLI code [`ssstar-cli/main.rs`](`main.rs`) to see how we im
 
 Licensed under either of
 
- * Apache License, Version 2.0
-   ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license
-   ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0
+  ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license
+  ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
 

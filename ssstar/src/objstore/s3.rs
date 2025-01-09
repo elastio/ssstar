@@ -16,7 +16,6 @@ use futures::{Stream, StreamExt};
 use http::{header::HeaderName, HeaderValue};
 use snafu::{prelude::*, IntoError};
 use std::{
-    any::Any,
     ops::Range,
     sync::Arc,
     sync::{
@@ -58,10 +57,6 @@ impl S3 {
 
 #[async_trait::async_trait]
 impl ObjectStorage for S3 {
-    fn typ(&self) -> &'static str {
-        "s3"
-    }
-
     async fn parse_url(
         &self,
         url: &Url,
@@ -680,14 +675,6 @@ impl S3Bucket {
 
 #[async_trait::async_trait]
 impl Bucket for S3Bucket {
-    fn as_any(&self) -> &(dyn Any + Sync + Send) {
-        self
-    }
-
-    fn objstore(&self) -> Box<dyn ObjectStorage> {
-        dyn_clone::clone_box(&self.inner.objstore)
-    }
-
     fn name(&self) -> &str {
         &self.inner.name
     }
@@ -1326,10 +1313,6 @@ impl MultipartUploader for S3MultipartUploader {
         Ok(())
     }
 
-    fn parts(&self) -> &[Range<u64>] {
-        &self.inner.parts
-    }
-
     #[instrument(skip(self, bytes), fields(key = %self.inner.key))]
     async fn upload_part(&self, range: Range<u64>, bytes: bytes::Bytes) -> Result<()> {
         let upload_id = self.upload_id();
@@ -1552,6 +1535,18 @@ async fn make_s3_client(
     Ok(aws_sdk_s3::Client::from_conf(s3_config))
 }
 
+/// creates the `RegionProviderChain`, at first try using passed `region` but if this is `None`
+/// then it looks for the region configuration from environment, if no environment configuration
+/// then use `us-east-1` region (which is default region on AWS)
+pub fn load_region_provider(region: Option<impl AsRef<str>>) -> RegionProviderChain {
+    if let Some(region) = region {
+        RegionProviderChain::first_try(Region::new(region.as_ref().to_string()))
+    } else {
+        // No explicit region; use the environment
+        RegionProviderChain::default_provider().or_else("us-east-1")
+    }
+}
+
 /// Find the longest common prefix shared by two string slices.
 fn longest_common_prefix<'a>(a: &'a str, b: &str) -> Option<&'a str> {
     if a.is_empty() {
@@ -1761,17 +1756,5 @@ mod tests {
 
             Ok(())
         })
-    }
-}
-
-/// creates the `RegionProviderChain`, at first try using passed `region` but if this is `None`
-/// then it looks for the region configuration from environment, if no environment configuration
-/// then use `us-east-1` region (which is default region on AWS)
-pub fn load_region_provider(region: Option<impl AsRef<str>>) -> RegionProviderChain {
-    if let Some(region) = region {
-        RegionProviderChain::first_try(Region::new(region.as_ref().to_string()))
-    } else {
-        // No explicit region; use the environment
-        RegionProviderChain::default_provider().or_else("us-east-1")
     }
 }
