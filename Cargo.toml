@@ -27,7 +27,7 @@ aws-smithy-client        = "0.60"
 aws-smithy-http          = "0.60"
 aws-smithy-http-tower    = "0.60"
 aws-smithy-runtime-api   = "1.1.1"
-aws-smithy-types         = "1.1.1"
+aws-smithy-types         = "1.2.12"
 aws-smithy-types-convert = { version = "0.60", features = ["convert-chrono"] }
 aws-types                = { version = "1.1.1", features = [] }
 base64                   = "0.21.0"
