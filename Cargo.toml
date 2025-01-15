@@ -22,7 +22,7 @@ aws-config               = { version = "1.1.1", features = ["behavior-version-la
 aws-credential-types     = { version = "1.1.0", features = ["hardcoded-credentials"] }
 aws-sdk-s3               = { version = "1.10.0", features = ["rt-tokio"] }
 aws-sdk-sts              = { version = "1.9.0" }
-aws-smithy-async         = "1.1.1"
+aws-smithy-async         = "1.2.4"
 aws-smithy-client        = "0.60"
 aws-smithy-http          = "0.60"
 aws-smithy-http-tower    = "0.60"
