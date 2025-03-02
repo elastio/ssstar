@@ -2,7 +2,14 @@
 all-features = true
 
 [advisories]
-ignore  = []
+ignore = [
+  # dotenv is unmaintained, but there's no obvious alternative
+  "RUSTSEC-2021-0141",
+  "RUSTSEC-2021-0142",
+
+  # instant is unmaintained; TODO investigate alternatives
+  "RUSTSEC-2024-0384",
+]
 version = 2
 
 [bans]
