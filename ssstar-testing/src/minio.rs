@@ -165,7 +165,7 @@ impl MinioServer {
         let bucket = &bucket[..bucket.len().min(63 - 9)];
 
         // Prepend a random number to ensure the bucket name is unique across multiple tests
-        let bucket = format!("{:08x}-{bucket}", rand::thread_rng().next_u32());
+        let bucket = format!("{:08x}-{bucket}", rand::rng().next_u32());
 
         debug!(%bucket, "Transformed bucket name into valid and unique bucket ID");
 
