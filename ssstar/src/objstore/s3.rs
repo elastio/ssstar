@@ -1,6 +1,6 @@
 use super::{Bucket, MultipartUploader, ObjectStorage};
 use crate::util::aws_sdk::stream::IntoStream;
-use crate::{create, Config, Result};
+use crate::{Config, Result, create};
 use aws_config::{
     default_provider::credentials::DefaultCredentialsChain, meta::region::RegionProviderChain,
     sts::AssumeRoleProvider,
@@ -8,26 +8,26 @@ use aws_config::{
 use aws_sdk_s3::config::{ConfigBag, Credentials};
 use aws_smithy_http::event_stream::BoxError;
 use aws_smithy_runtime_api::client::{
-    interceptors::context::BeforeTransmitInterceptorContextMut, interceptors::Intercept,
+    interceptors::Intercept, interceptors::context::BeforeTransmitInterceptorContextMut,
     runtime_components::RuntimeComponents,
 };
 use aws_types::region::Region;
 use futures::{Stream, StreamExt};
-use http::{header::HeaderName, HeaderValue};
-use snafu::{prelude::*, IntoError};
+use http::{HeaderValue, header::HeaderName};
+use snafu::{IntoError, prelude::*};
 use std::{
     ops::Range,
     sync::Arc,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use tokio::{
     io::DuplexStream,
     sync::{mpsc, oneshot},
 };
-use tracing::{debug, error, instrument, warn, Instrument};
+use tracing::{Instrument, debug, error, instrument, warn};
 use url::Url;
 
 const APP_NAME: &str = concat!(env!("CARGO_PKG_NAME"), "-", env!("CARGO_PKG_VERSION"),);
@@ -459,7 +459,10 @@ impl S3Bucket {
 
     /// Given a potentially huge range of bytes, break it up into small pieces according to the
     /// multipart config
-    fn split_range_into_multipart(&self, range: Range<u64>) -> impl Iterator<Item = Range<u64>> {
+    fn split_range_into_multipart(
+        &self,
+        range: Range<u64>,
+    ) -> impl Iterator<Item = Range<u64>> + use<> {
         let config = &self.inner.objstore.inner.config;
         let threshold = config.multipart_threshold.get_bytes() as u64;
         let chunk_size = config.multipart_chunk_size.get_bytes() as u64;
@@ -658,8 +661,13 @@ impl S3Bucket {
                         // chunk size to keep the object count under 10K
                         let new_chunk_size = (size_hint + 9_999) / 10_000;
 
-                        warn!(key, size_hint, multipart_chunk_size, new_chunk_size,
-                            "New object size is so large that the requested chunk size will be overridden to keep the total chunk count under 10K");
+                        warn!(
+                            key,
+                            size_hint,
+                            multipart_chunk_size,
+                            new_chunk_size,
+                            "New object size is so large that the requested chunk size will be overridden to keep the total chunk count under 10K"
+                        );
 
                         Ok(Some(new_chunk_size as usize))
                     }
@@ -728,8 +736,10 @@ impl Bucket for S3Bucket {
 
                 // The callers of this method should have already parsed the URL and determine this
                 // is a prefix by the use of the trailing `/` character.
-                assert!(prefix.ends_with('/'),
-                    "BUG: It should not be possible to create a Prefix selector unless the prefix ends with `/`, but the caller passed prefix '{prefix}'");
+                assert!(
+                    prefix.ends_with('/'),
+                    "BUG: It should not be possible to create a Prefix selector unless the prefix ends with `/`, but the caller passed prefix '{prefix}'"
+                );
 
                 // Use the paginated API to automatically handle dealing with continuation tokens
                 let pages = self
@@ -1629,9 +1639,12 @@ mod tests {
                     })
                     .await?;
 
-                assert_eq!(1, objects.len(),
-                "Object selector for object '{}' should produce exactly one match for that precise object",
-                object);
+                assert_eq!(
+                    1,
+                    objects.len(),
+                    "Object selector for object '{}' should produce exactly one match for that precise object",
+                    object
+                );
 
                 let input_object = objects.first().unwrap();
                 assert_eq!(object, &input_object.key);
@@ -1713,9 +1726,11 @@ mod tests {
 
             assert_eq!(test_data.len(), objects.len());
             for test_data_key in test_data.keys() {
-                assert!(objects
-                    .iter()
-                    .any(|input_object| &input_object.key == test_data_key));
+                assert!(
+                    objects
+                        .iter()
+                        .any(|input_object| &input_object.key == test_data_key)
+                );
             }
 
             // The `**` matches any prefix, and any object
@@ -1726,12 +1741,16 @@ mod tests {
                 .await?;
 
             assert_eq!(2, objects.len());
-            assert!(objects
-                .iter()
-                .any(|input_object| &input_object.key == "prefix3/prefix4/test"));
-            assert!(objects
-                .iter()
-                .any(|input_object| &input_object.key == "prefix3/test"));
+            assert!(
+                objects
+                    .iter()
+                    .any(|input_object| &input_object.key == "prefix3/prefix4/test")
+            );
+            assert!(
+                objects
+                    .iter()
+                    .any(|input_object| &input_object.key == "prefix3/test")
+            );
 
             // The `*` matches objects but not prefixes
             let objects = s3bucket
@@ -1750,9 +1769,11 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(",")
             );
-            assert!(objects
-                .iter()
-                .any(|input_object| &input_object.key == "prefix3/test"));
+            assert!(
+                objects
+                    .iter()
+                    .any(|input_object| &input_object.key == "prefix3/test")
+            );
 
             Ok(())
         })
