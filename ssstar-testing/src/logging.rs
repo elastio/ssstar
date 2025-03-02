@@ -35,7 +35,7 @@ impl TestWriter {
     }
 }
 
-impl<'a> Write for &'a TestWriter {
+impl Write for &TestWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut guard = self.log_events.lock().unwrap();
 
@@ -77,7 +77,7 @@ pub fn test_with_logging(test: impl Future<Output = Result<()>>) -> Result<()> {
 
     let dispatch = {
         use tracing_subscriber::prelude::*;
-        use tracing_subscriber::{fmt, EnvFilter};
+        use tracing_subscriber::{EnvFilter, fmt};
 
         // Note the use of `TestWriter` here which writes the log events to stdout in a way that
         // Rust unit tests are able to capture (at least on the main thread)

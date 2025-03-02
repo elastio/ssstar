@@ -6,7 +6,7 @@
 //! operates on synchronous `Read` and `Write` traits.
 
 use crate::Result;
-use bytes::{buf::Reader, Buf, Bytes};
+use bytes::{Buf, Bytes, buf::Reader};
 use futures::{Stream, StreamExt};
 use std::{io::Read, pin::Pin};
 use tokio::io::AsyncWrite;
@@ -124,7 +124,7 @@ mod tests {
         const MIN_READ_SIZE: usize = 1;
 
         let mut test_data = vec![0u8; TEST_DATA_SIZE];
-        let mut rand = rand::thread_rng();
+        let mut rand = rand::rng();
 
         rand.fill(&mut test_data[..]);
 
@@ -134,7 +134,7 @@ mod tests {
         let mut cursor = Cursor::new(test_data.clone());
 
         while cursor.position() < TEST_DATA_SIZE as u64 {
-            let mut chunk = vec![0u8; rand.gen_range(MIN_READ_SIZE..MAX_READ_SIZE)];
+            let mut chunk = vec![0u8; rand.random_range(MIN_READ_SIZE..MAX_READ_SIZE)];
 
             let bytes_read = cursor.read(&mut chunk[..]).unwrap();
 
@@ -154,13 +154,13 @@ mod tests {
         // panic if you try to read from an async task.  That's a nice side-effect and ensures that
         // we won't accidentally do blocking reads in an async task
         let read_data = tokio::task::spawn_blocking(move || {
-            let mut rand = rand::thread_rng();
+            let mut rand = rand::rng();
 
             // Read the data back from the Read implementation in random chunks
             let mut read_data = Vec::with_capacity(TEST_DATA_SIZE);
 
             while read_data.len() < TEST_DATA_SIZE {
-                let mut chunk = vec![0u8; rand.gen_range(MIN_READ_SIZE..MAX_READ_SIZE)];
+                let mut chunk = vec![0u8; rand.random_range(MIN_READ_SIZE..MAX_READ_SIZE)];
 
                 let bytes_read = reader.read(&mut chunk[..]).unwrap();
 

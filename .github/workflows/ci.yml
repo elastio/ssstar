@@ -14,7 +14,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --all-features
           command: check advisories
@@ -25,40 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          # The latest version of nightly leads to failre on CI check:
-          # error[E0635]: unknown feature `proc_macro_span_shrink`
-          #   --> /home/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/proc-macro2-1.0.58/src/lib.rs:92:30
-          #    |
-          # 92 |     feature(proc_macro_span, proc_macro_span_shrink)
-          #    |                              ^^^^^^^^^^^^^^^^^^^^^^
-          #
-          # to prevent this we pinned the specific version of nightly with doesn't have this bug, you can unpin the version
-          # if you check that this works
-          #
-          # More details see here: https://github.com/dtolnay/proc-macro2/issues/356#issuecomment-1614449061
-          # and here https://github.com/dtolnay/proc-macro2/issues/356#issuecomment-1614467505
-          #
-          toolchain: nightly-2023-06-15
+        uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --all-features
           command: check bans licenses sources
-      - name: Install cargo-udeps
-        shell: bash
-        run: |
-          wget  \
-            --output-file cargo-udeps.tar.gz \
-            --tries=10 --retry-connrefused \
-            https://github.com/est31/cargo-udeps/releases/download/v0.1.35/cargo-udeps-v0.1.35-x86_64-unknown-linux-gnu.tar.gz
-          tar xvzf  cargo-udeps-v0.1.35-x86_64-unknown-linux-gnu.tar.gz --strip-components=2
-          mv cargo-udeps $HOME/.cargo/bin/
       - name: Check for unused dependencies
-        shell: bash
-        run: |
-          cargo +nightly-2023-06-15 udeps
+        uses: bnjbvr/cargo-machete@v0.8.0
 
   rustfmt:
     runs-on: ubuntu-latest
@@ -66,7 +40,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@1.85.0
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
@@ -83,7 +57,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@1.85.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -110,7 +84,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
       - name: Cache the minio binary
         id: cache-minio
@@ -175,7 +149,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@1.85.0
         with:
           targets: x86_64-unknown-linux-musl
       - name: Install MUSL deps
@@ -200,7 +174,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
       - name: Check documentation
         env:

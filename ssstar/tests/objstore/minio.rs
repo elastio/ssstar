@@ -5,8 +5,8 @@
 //! compatibility with S3 but rather the correct behavior of our code when talking to S3 or any
 //! S3-compatible endpoint (minio included).
 use crate::{
-    progress::{TestCreateProgressCallback, TestExtractProgressCallback},
     Result,
+    progress::{TestCreateProgressCallback, TestExtractProgressCallback},
 };
 use assert_matches::assert_matches;
 use ssstar::S3TarError;

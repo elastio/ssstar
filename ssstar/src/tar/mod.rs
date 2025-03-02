@@ -56,7 +56,9 @@ impl<W: std::io::Write + Send + 'static> Drop for TarBuilderWrapper<W> {
                 // Exclusive access to the builder, so this is the last clone
                 // Move the dropping to a blocking thread where it's safe
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    warn!("tar builder dropped without being finished, probably due to an error.  spawning cleanup on blocking thread.");
+                    warn!(
+                        "tar builder dropped without being finished, probably due to an error.  spawning cleanup on blocking thread."
+                    );
 
                     // Run the drop in another async task.  This isn't ideal, it would be much better
                     // if we could block waitingfor the drop to happen, but alas async drop is a bit of
@@ -319,8 +321,8 @@ mod tests {
     use super::*;
     use rand::rngs::ThreadRng;
     use rand::{
-        distributions::{Alphanumeric, Standard},
         Rng,
+        distr::{Alphanumeric, StandardUniform},
     };
     use std::io::{Cursor, Read, Seek};
     use std::path::PathBuf;
@@ -335,7 +337,7 @@ mod tests {
             // First generate a random file path.  The max length should be > 512 bytes because
             // that activates some special-case logic in the tar file format that we want to make
             // sure we exercise here as well.
-            let path_length: usize = rng.gen_range(1..1024);
+            let path_length: usize = rng.random_range(1..1024);
             let random_string: String = rng
                 .sample_iter(&Alphanumeric)
                 .take(path_length)
@@ -346,8 +348,11 @@ mod tests {
             // Generate some random data as well.  Entries are zero-padded if their data doesn't
             // end on a 512-byte boundary so we want to generate enough random samples to exercise
             // the padding logic as well
-            let data_length: usize = rng.gen_range(1..10_000);
-            let data: Vec<u8> = rng.sample_iter(&Standard).take(data_length).collect();
+            let data_length: usize = rng.random_range(1..10_000);
+            let data: Vec<u8> = rng
+                .sample_iter(&StandardUniform)
+                .take(data_length)
+                .collect();
 
             Self { path, data }
         }
@@ -357,7 +362,7 @@ mod tests {
     /// data is written to the tar archive.
     #[tokio::test]
     async fn builder_calculates_data_location() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Generate a bunch of test data for the tar archive
         println!("Generating test data");
@@ -438,13 +443,18 @@ mod tests {
                 }
 
                 if let Some(offset) = find_substring(&entire_file, &test_data.data) {
-                    panic!("Test data file {} contents was found at offset {} in tar file, but the builder claimed the data range is {:?}",
-                           test_data.path.display(), offset,
-                           data_range);
+                    panic!(
+                        "Test data file {} contents was found at offset {} in tar file, but the builder claimed the data range is {:?}",
+                        test_data.path.display(),
+                        offset,
+                        data_range
+                    );
                 } else {
-                    panic!("Test data file {} contents was not found in tar file at all, but the builder claimed the data range is {:?}",
-                           test_data.path.display(),
-                           data_range);
+                    panic!(
+                        "Test data file {} contents was not found in tar file at all, but the builder claimed the data range is {:?}",
+                        test_data.path.display(),
+                        data_range
+                    );
                 }
             }
         }

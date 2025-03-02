@@ -278,8 +278,9 @@ impl InputObject {
         } else {
             let me = Arc::new(self);
             let mut parts = Vec::with_capacity(
-                ((me.size + config.multipart_chunk_size.get_bytes() as u64 - 1)
-                    / config.multipart_chunk_size.get_bytes() as u64) as usize,
+                me.size
+                    .div_ceil(config.multipart_chunk_size.get_bytes() as u64)
+                    as usize,
             );
             let mut part_number = 0;
             let mut byte_offset = 0u64;
@@ -836,7 +837,10 @@ impl CreateArchiveJob {
                     // The first part of a new object has been downloaded
                     let (mut part, data) = result?;
 
-                    assert_eq!(0, part.part_number, "BUG: the parts are completing out of order or there's a logic error in this loop");
+                    assert_eq!(
+                        0, part.part_number,
+                        "BUG: the parts are completing out of order or there's a logic error in this loop"
+                    );
 
                     debug!(key = %part.input_object.key, size = part.input_object.size, "Reading object and writing to tar archive");
 
@@ -933,8 +937,11 @@ impl CreateArchiveJob {
                     drop(sender);
                     let data_range = append_fut.await?;
 
-                    assert_eq!(part.input_object.size, data_range.end - data_range.start,
-                               "BUG: reported data range doesn't match the expected size of the object's data");
+                    assert_eq!(
+                        part.input_object.size,
+                        data_range.end - data_range.start,
+                        "BUG: reported data range doesn't match the expected size of the object's data"
+                    );
 
                     // Normally this is what we want to hear, but if the appender dropped
                     // the channel that means we weren't able to send all of the parts to
@@ -993,7 +1000,10 @@ impl CreateArchiveJob {
                     // IO error like BrokenPipe.  We should handle that failure and, before
                     // returning whatever error that future fails with, attempt to pull a result
                     // from this receiver since that will be the actual reason for the failure.
-                    error!(?error, "The async upload task which uploads the tar archive to object storage reported an error");
+                    error!(
+                        ?error,
+                        "The async upload task which uploads the tar archive to object storage reported an error"
+                    );
                     Err(error)
                 }
                 Err(_) => {

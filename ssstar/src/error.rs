@@ -11,7 +11,9 @@ pub(crate) type SdkError<T> = RawSdkError<T, Response>;
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum S3TarError {
-    #[snafu(display("The URL '{url}' doesn't correspond to any supported object storage technology.  Supported URL schemes are: s3"))]
+    #[snafu(display(
+        "The URL '{url}' doesn't correspond to any supported object storage technology.  Supported URL schemes are: s3"
+    ))]
     UnsupportedObjectStorage { url: Url },
 
     #[snafu(display("The S3 URL '{url}' is missing the bucket name"))]
@@ -20,7 +22,9 @@ pub enum S3TarError {
     #[snafu(display("No matching S3 objects were found"))]
     NoInputs,
 
-    #[snafu(display("The input [{input}] did not match any objects; double-check the bucket name and the path expression"))]
+    #[snafu(display(
+        "The input [{input}] did not match any objects; double-check the bucket name and the path expression"
+    ))]
     SelectorMatchesNoObjects { input: String },
 
     #[snafu(display(
@@ -47,7 +51,9 @@ pub enum S3TarError {
     #[snafu(display("Object '{key}' in S3 bucket '{bucket}' doesn't exist"))]
     ObjectNotFound { bucket: String, key: String },
 
-    #[snafu(display("No objects in the prefix '{prefix}' in S3 bucket '{bucket}' were found.  If you meant to specify a object and not a prefix, remove the `/` character from the end of the URL.  If you want to match all objects in this prefix recursively, use a glob expression like '{prefix}/**.*'"))]
+    #[snafu(display(
+        "No objects in the prefix '{prefix}' in S3 bucket '{bucket}' were found.  If you meant to specify a object and not a prefix, remove the `/` character from the end of the URL.  If you want to match all objects in this prefix recursively, use a glob expression like '{prefix}/**.*'"
+    ))]
     PrefixNotFoundOrEmpty { bucket: String, prefix: String },
 
     #[snafu(display("Error listing objects in S3 bucket '{bucket}' with prefix '{prefix}"))]
@@ -72,9 +78,7 @@ pub enum S3TarError {
         source: SdkError<aws_sdk_s3::operation::get_object::GetObjectError>,
     },
 
-    #[snafu(display(
-        "Error starting multi-part upload of object '{key}' in S3 bucket '{bucket}'"
-    ))]
+    #[snafu(display("Error starting multi-part upload of object '{key}' in S3 bucket '{bucket}'"))]
     CreateMultipartUpload {
         bucket: String,
         key: String,
@@ -110,7 +114,9 @@ pub enum S3TarError {
         source: SdkError<aws_sdk_s3::operation::put_object::PutObjectError>,
     },
 
-    #[snafu(display("Caller abandoned upload of object '{key}' in S3 bucket '{bucket}' before any data was uploaded"))]
+    #[snafu(display(
+        "Caller abandoned upload of object '{key}' in S3 bucket '{bucket}' before any data was uploaded"
+    ))]
     UnipartUploadAbandoned { bucket: String, key: String },
 
     #[snafu(display("Error reading byte stream for object '{key}' in S3 bucket '{bucket}'"))]
@@ -120,7 +126,9 @@ pub enum S3TarError {
         source: aws_smithy_types::byte_stream::error::Error,
     },
 
-    #[snafu(display("Unable to create new object '{key}' in S3 bucket '{bucket}', because the expected size of {size} bytes is larger than the 5TB maximum object size"))]
+    #[snafu(display(
+        "Unable to create new object '{key}' in S3 bucket '{bucket}', because the expected size of {size} bytes is larger than the 5TB maximum object size"
+    ))]
     ObjectTooLarge {
         bucket: String,
         key: String,
@@ -133,7 +141,9 @@ pub enum S3TarError {
         source: glob::PatternError,
     },
 
-    #[snafu(display("The filter '{filter}' is not valid.  Filters cannot be empty strings, and they cannot start with '/'"))]
+    #[snafu(display(
+        "The filter '{filter}' is not valid.  Filters cannot be empty strings, and they cannot start with '/'"
+    ))]
     InvalidFilter { filter: String },
 
     #[snafu(display("The archive URL '{url}' is missing the key name"))]
@@ -155,10 +165,14 @@ pub enum S3TarError {
     #[snafu(display("Error reading from tar archive"))]
     TarRead { source: std::io::Error },
 
-    #[snafu(display("BUG: it looks like the background task writing an extracted object to object storage has panicked.  Check log output for more details"))]
+    #[snafu(display(
+        "BUG: it looks like the background task writing an extracted object to object storage has panicked.  Check log output for more details"
+    ))]
     AsyncObjectWriterPanic,
 
-    #[snafu(display("BUG: it looks like the background task writing the tar archive to object storage has panicked.  Check log output for more details"))]
+    #[snafu(display(
+        "BUG: it looks like the background task writing the tar archive to object storage has panicked.  Check log output for more details"
+    ))]
     AsyncTarWriterPanic,
 
     #[snafu(display("Receiver dropped; assuming tar extract is aborted"))]

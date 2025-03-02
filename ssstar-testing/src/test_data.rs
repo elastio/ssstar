@@ -1,6 +1,6 @@
 //! Create test data in S3-compatible object storage
 use crate::Result;
-use aws_sdk_s3::{primitives::ByteStream, Client};
+use aws_sdk_s3::{Client, primitives::ByteStream};
 use bytes::Bytes;
 use futures::StreamExt;
 use rand::prelude::*;
@@ -58,7 +58,7 @@ pub struct TestObjectWithData {
 pub fn prepend_unique_prefix(
     objects: impl IntoIterator<Item = TestObject>,
 ) -> (String, impl IntoIterator<Item = TestObject>) {
-    let prefix = format!("{:08x}/", rand::thread_rng().next_u32());
+    let prefix = format!("{:08x}/", rand::rng().next_u32());
 
     let objects = {
         let prefix = prefix.clone();
@@ -128,7 +128,7 @@ pub async fn make_test_data_object(
     key: &str,
     size: usize,
 ) -> Result<Vec<u8>> {
-    let mut rand = rand::thread_rng();
+    let mut rand = rand::rng();
     let mut data = vec![0u8; size];
 
     rand.fill(&mut data[..]);
