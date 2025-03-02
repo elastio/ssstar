@@ -41,9 +41,7 @@ aws-credential-types     = { workspace = true }
 aws-sdk-s3               = { workspace = true }
 aws-sdk-sts              = { workspace = true }
 aws-smithy-async         = { workspace = true }
-aws-smithy-client        = { workspace = true }
 aws-smithy-http          = { workspace = true }
-aws-smithy-http-tower    = { workspace = true }
 aws-smithy-runtime-api   = { workspace = true }
 aws-smithy-types         = { workspace = true }
 aws-smithy-types-convert = { workspace = true }
@@ -57,14 +55,12 @@ futures                  = { workspace = true }
 glob                     = { workspace = true }
 http                     = { workspace = true }
 itertools                = { workspace = true }
-once_cell                = { workspace = true }
 serde_json               = { workspace = true, optional = true }
 snafu                    = { workspace = true }
 tar                      = { workspace = true }
 tokio                    = { workspace = true }
 tokio-stream             = { workspace = true }
 tokio-util               = { workspace = true }
-tower                    = { workspace = true }
 tracing                  = { workspace = true }
 url                      = { workspace = true }
 
