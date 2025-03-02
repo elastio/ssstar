@@ -1533,6 +1533,10 @@ async fn make_s3_client(
                 .map_err(|err| crate::S3TarError::HeaderValueConvertion { source: err })?,
         });
 
+    if config.force_path_style {
+        s3_config_builder = s3_config_builder.force_path_style(true);
+    }
+
     if let Some(s3_endpoint) = &config.s3_endpoint {
         s3_config_builder = s3_config_builder.endpoint_url(s3_endpoint.to_string());
     }

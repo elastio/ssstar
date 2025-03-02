@@ -131,6 +131,10 @@ pub struct Config {
     /// This defaults to something provided by the AWS SDK for Rust.
     #[cfg_attr(feature = "clap", clap(long, global = true))]
     pub user_agent: Option<String>,
+
+    /// Force the client to use path-style addressing for buckets.
+    #[cfg_attr(feature = "clap", clap(long, global = true))]
+    pub force_path_style: bool,
 }
 
 impl Default for Config {
@@ -153,6 +157,7 @@ impl Default for Config {
             max_concurrent_requests: 10,
             max_queue_size: 1000,
             user_agent: None,
+            force_path_style: false,
         }
     }
 }
