@@ -35,7 +35,7 @@ impl TestWriter {
     }
 }
 
-impl<'a> Write for &'a TestWriter {
+impl Write for &TestWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut guard = self.log_events.lock().unwrap();
 

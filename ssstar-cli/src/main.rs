@@ -134,15 +134,6 @@ enum Command {
         #[clap(value_parser, value_name = "URL")]
         target: Url,
 
-        /// Strip this many path components (separated by `/`) from objects in archive prior to
-        /// extracting.
-        ///
-        /// For example if this value is 2, and the archive contains an object `foo/bar/baz/boo`,
-        /// then the resulting target URL for that object will be the concatenation of `target` and
-        /// `baz/boo`; the first two path components `foo` and `bar` are stripped.
-        //#[clap(long)]
-        //strip_components: Option<usize>,
-
         /// Optional filters to limit the objects extracted from the archive.
         ///
         /// These can be exact object names, prefixes, or globs.  Filters are evaluated with an OR

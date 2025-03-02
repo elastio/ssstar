@@ -499,7 +499,7 @@ impl S3Bucket {
             fn size_hint(&self) -> (usize, Option<usize>) {
                 // Approximate the expected size based on the range and the thunk size
                 let remaining = self.range.end - self.next_offset;
-                let chunks = (remaining + self.chunk_size - 1) / self.chunk_size;
+                let chunks = remaining.div_ceil(self.chunk_size);
 
                 (chunks as usize, Some(chunks as usize))
             }
@@ -651,9 +651,7 @@ impl S3Bucket {
                     // Object will be large enough to justify using multipart
                     // Assuming the size hint is the upper bound of what's possible, how many parts
                     // will the configured chunk size produce?
-                    if (size_hint + multipart_chunk_size as u64 - 1) / multipart_chunk_size as u64
-                        <= 10_000
-                    {
+                    if size_hint.div_ceil(multipart_chunk_size as u64) <= 10_000 {
                         // Object is small enough the requested chunk size can be used
                         Ok(Some(multipart_chunk_size))
                     } else {
@@ -1040,8 +1038,7 @@ impl Bucket for S3Bucket {
         size: u64,
     ) -> Result<Option<Vec<Range<u64>>>> {
         if let Some(chunk_size) = self.compute_multipart_chunk_size(key, Some(size))? {
-            let mut parts =
-                Vec::with_capacity(((size + chunk_size as u64 - 1) / chunk_size as u64) as usize);
+            let mut parts = Vec::with_capacity(size.div_ceil(chunk_size as u64) as usize);
             let mut offset = 0u64;
             while offset < size {
                 let len = chunk_size as u64;

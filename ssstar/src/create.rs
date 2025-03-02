@@ -278,8 +278,9 @@ impl InputObject {
         } else {
             let me = Arc::new(self);
             let mut parts = Vec::with_capacity(
-                ((me.size + config.multipart_chunk_size.get_bytes() as u64 - 1)
-                    / config.multipart_chunk_size.get_bytes() as u64) as usize,
+                me.size
+                    .div_ceil(config.multipart_chunk_size.get_bytes() as u64)
+                    as usize,
             );
             let mut part_number = 0;
             let mut byte_offset = 0u64;
