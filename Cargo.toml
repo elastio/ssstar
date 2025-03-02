@@ -1,5 +1,6 @@
 [workspace]
 members = ["ssstar", "ssstar-cli", "ssstar-testing"]
+resolver = "3"
 
 [workspace.package]
 authors       = ["Adam Nelson <adam@elastio.com>"]
