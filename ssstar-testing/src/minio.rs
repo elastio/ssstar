@@ -189,9 +189,9 @@ impl MinioServer {
             .retry(|| client.head_bucket().bucket(&bucket).send())
             .await
         {
-            return Err(
-                eyre!("The bucket {bucket} is not accessible even after it was explicitly created.  Last error was: \n{e}")
-            );
+            return Err(eyre!(
+                "The bucket {bucket} is not accessible even after it was explicitly created.  Last error was: \n{e}"
+            ));
         };
 
         if enable_versioning {
@@ -223,10 +223,10 @@ impl MinioServer {
         let client = self.aws_client().await?;
 
         if let Err(e) = policy.retry(|| client.list_buckets().send()).await {
-            Err(
-                eyre!("The minio server didn't come online in the allowed time.  The last error reported by ListBuckets against the server was:\n{}",
-                    e)
-            )
+            Err(eyre!(
+                "The minio server didn't come online in the allowed time.  The last error reported by ListBuckets against the server was:\n{}",
+                e
+            ))
         } else {
             Ok(())
         }

@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use aws_credential_types::provider::error::CredentialsError;
-use aws_credential_types::{provider::ProvideCredentials, Credentials};
+use aws_credential_types::{Credentials, provider::ProvideCredentials};
 use std::{fmt::Debug, sync::Arc};
 
 /// This represents the credentials to access to AWS API.

@@ -31,17 +31,17 @@ use crate::tar::CountingReader;
 use crate::{Config, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
-use snafu::{prelude::*, IntoError};
+use snafu::{IntoError, prelude::*};
 use std::future::Future;
 use std::io::{BufReader, Read};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tracing::{debug, debug_span, error, info, info_span, instrument, Instrument};
+use tracing::{Instrument, debug, debug_span, error, info, info_span, instrument};
 use url::Url;
 
 /// Represents from where the archive will be read
@@ -740,7 +740,9 @@ impl ExtractArchiveJob {
         if sender.blocking_send(component).is_err() {
             // The async task receiving these entries has dropped the receiver, which is a sign
             // the extract task is aborted
-            debug!("TarEntryComponent receiver task dropped the receiver; aborting blocking reader task");
+            debug!(
+                "TarEntryComponent receiver task dropped the receiver; aborting blocking reader task"
+            );
             return crate::error::TarExtractAbortedSnafu {}.fail();
         }
 

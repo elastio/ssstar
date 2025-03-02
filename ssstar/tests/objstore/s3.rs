@@ -5,8 +5,8 @@
 //! since these tests assume they can access Elastio-owned buckets specifically created for the
 //! purposes of running these tests.
 use crate::{
-    progress::{TestCreateProgressCallback, TestExtractProgressCallback},
     Result,
+    progress::{TestCreateProgressCallback, TestExtractProgressCallback},
 };
 use aws_config::meta::region::RegionProviderChain;
 use aws_types::region::Region;

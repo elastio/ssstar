@@ -260,7 +260,7 @@ fn main() -> color_eyre::Result<()> {
     // If not, log events will be ignored
     if args.global.verbose || std::env::var("RUST_LOG").is_ok() {
         use tracing_subscriber::prelude::*;
-        use tracing_subscriber::{fmt, EnvFilter};
+        use tracing_subscriber::{EnvFilter, fmt};
 
         // Configure a custom event formatter
         //

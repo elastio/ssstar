@@ -1,4 +1,4 @@
-use crate::{create, Config, Result};
+use crate::{Config, Result, create};
 use dyn_clone::DynClone;
 use std::ops::Range;
 use tokio::io::DuplexStream;
