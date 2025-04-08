@@ -291,7 +291,7 @@ impl ExtractFilter {
     /// be `foo/bar/baz`
     fn matches(&self, path: &Path) -> bool {
         match self {
-            Self::Object { key } => path.to_string_lossy() == key.as_ref(),
+            Self::Object { key } => path.to_string_lossy() == key.as_str(),
             Self::Prefix { prefix } => path.to_string_lossy().starts_with(&**prefix),
             Self::Glob { pattern } => {
                 // To make sure the glob matching behaviors like it does in unix shells, require
