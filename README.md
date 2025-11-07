@@ -8,7 +8,7 @@ compatible with `tar`, though it uses different command line arguments.
 [![Docs.rs](https://docs.rs/ssstar/badge.svg)](https://docs.rs/ssstar)
 [![CI](https://github.com/elastio/ssstar/workflows/CI/badge.svg)](https://github.com/elastio/ssstar/actions)
 [![Coverage Status](https://coveralls.io/repos/github/elastio/ssstar/badge.svg?branch=master)](https://coveralls.io/github/elastio/ssstar?branch=master)
-![Crates.io](https://img.shields.io/crates/l/ssstar)
+[![Crates.io](https://img.shields.io/crates/l/ssstar)](#license)
 
 `ssstar` provides a cross-platform Rust-powered CLI as well as a Rust library crate that lets you create tar archives
 containing objects from S3 and S3-compatible object storage, regardless of size. `ssstar` applies concurrency
