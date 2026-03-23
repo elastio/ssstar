@@ -88,7 +88,7 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
 
 #[cfg(unix)]
 /// On unix this will never fail
-pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
+pub fn path2bytes(p: &Path) -> io::Result<Cow<'_, [u8]>> {
     Ok(Cow::Borrowed(p.as_os_str().as_bytes()))
 }
 

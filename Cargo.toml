@@ -1,5 +1,5 @@
 [workspace]
-members = ["ssstar", "ssstar-cli", "ssstar-testing"]
+members  = ["ssstar", "ssstar-cli", "ssstar-testing"]
 resolver = "3"
 
 [workspace.package]
@@ -18,13 +18,13 @@ version       = "0.7.3"
 again                    = "0.1.2"
 assert_matches           = "1.5.0"
 async-trait              = "0.1"
-aws-config               = { version = "1.1.1", features = ["behavior-version-latest"] }
+aws-config               = { version = "1.6.3", features = ["behavior-version-latest"] }
 aws-credential-types     = { version = "1.1.0", features = ["hardcoded-credentials"] }
-aws-sdk-s3               = { version = "1.10.0", features = ["rt-tokio"] }
-aws-sdk-sts              = { version = "1.9.0" }
+aws-sdk-s3               = { version = "1.79.0", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a"] }
+aws-sdk-sts              = { version = "1.73.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-smithy-async         = "1.1.1"
 aws-smithy-client        = "0.60"
-aws-smithy-http          = "0.60"
+aws-smithy-http          = { version = "0.62", features = ["event-stream"] }
 aws-smithy-http-tower    = "0.60"
 aws-smithy-runtime-api   = "1.1.1"
 aws-smithy-types         = "1.1.1"
